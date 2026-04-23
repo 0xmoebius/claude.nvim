@@ -52,10 +52,11 @@ local function ensure_cleanup_autocmd()
   })
 end
 
-local function replay_session(session_path, buf)
+local function replay_session(session_path, rec)
   if not session_path then return end
   local f = io.open(session_path, "r")
   if not f then return end
+  local buf = rec.transcript_buf
   local function extract(content)
     if type(content) == "string" then return content end
     if type(content) == "table" then
@@ -78,16 +79,34 @@ local function replay_session(session_path, buf)
   end
   for line in f:lines() do
     local ok, d = pcall(vim.json.decode, line)
-    if ok and type(d) == "table" and d.message then
-      if d.type == "user" then
-        local t = extract(d.message.content)
-        if t and not is_bp(t) then render.append_user(buf, t) end
-      elseif d.type == "assistant" then
-        local t = extract(d.message.content)
-        if t and t ~= "" then
-          render.begin_assistant(buf)
-          render.append_assistant_delta(buf, t)
-          render.end_assistant(buf)
+    if ok and type(d) == "table" then
+      -- Seed context-window + context-tokens from the most recent persisted
+      -- usage block so `ctx X%` shows immediately on resume instead of
+      -- waiting for the first new message_start event.
+      if d.message and d.message.usage then
+        local u = d.message.usage
+        rec.context_tokens = (u.input_tokens or 0)
+          + (u.cache_read_input_tokens or 0)
+          + (u.cache_creation_input_tokens or 0)
+      end
+      if d.modelUsage then
+        for _, mu in pairs(d.modelUsage) do
+          if type(mu) == "table" and mu.contextWindow then
+            rec.context_window = mu.contextWindow
+          end
+        end
+      end
+      if d.message then
+        if d.type == "user" then
+          local t = extract(d.message.content)
+          if t and not is_bp(t) then render.append_user(buf, t) end
+        elseif d.type == "assistant" then
+          local t = extract(d.message.content)
+          if t and t ~= "" then
+            render.begin_assistant(buf)
+            render.append_assistant_delta(buf, t)
+            render.end_assistant(buf)
+          end
         end
       end
     end
@@ -101,7 +120,7 @@ local function activate(entry)
   local rec = layout.open(entry.cwd)
   if entry.kind == "session" then
     rec.session_id = entry.id
-    replay_session(entry.path, rec.transcript_buf)
+    replay_session(entry.path, rec)
   end
 
   prompt.setup_keymaps(rec)
@@ -151,6 +170,26 @@ local function activate(entry)
     bind(rec.transcript_buf, km.prev_marker,
       function() M.jump_next_marker(-1) end,
       "Claude: previous message marker")
+    -- Symmetric to prompt's `k`: pressing `j` while on the last row of the
+    -- transcript AND that row is empty jumps focus to the prompt. On any
+    -- other row falls through to vim's default `j`.
+    vim.keymap.set("n", "j", function()
+      local tbuf = rec.transcript_buf
+      if not vim.api.nvim_buf_is_valid(tbuf) then return "j" end
+      local row = vim.api.nvim_win_get_cursor(0)[1]
+      local line_count = vim.api.nvim_buf_line_count(tbuf)
+      if row == line_count then
+        local line = vim.api.nvim_buf_get_lines(tbuf, row - 1, row, false)[1] or ""
+        if line == "" then
+          vim.schedule(function()
+            layout.focus_prompt(state.current(), { insert = false })
+          end)
+          return ""
+        end
+      end
+      return "j"
+    end, { buffer = rec.transcript_buf, expr = true, silent = true,
+           desc = "Claude: down, or escape to prompt at bottom" })
   end
   return rec
 end
@@ -199,7 +238,7 @@ local function on_pick(entry)
   activate(entry)
 end
 
--- Entry point for the cced shell wrapper.
+-- Entry point for the cc shell wrapper.
 function M.launch(opts)
   opts = opts or {}
   state.origin_cwd = opts.origin_cwd or vim.fn.getcwd()

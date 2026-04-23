@@ -38,12 +38,13 @@ M.defaults = {
   -- ---- transcript rendering ------------------------------------------------
   signs = {
     char = "▎",
-    user = "ClaudeUserSign",
-    assistant = "ClaudeAssistantSign",
-    tool = "ClaudeToolSign",
+    -- Only errors get a gutter bar by default — everything else relies on
+    -- inline prefixes + line background for differentiation. Set any of
+    -- these to a hl group name to bring the gutter bar back for that role.
+    user = nil,
+    assistant = nil,
+    tool = nil,
     error = "ClaudeErrorSign",
-    -- Inline prefix drawn at col 0 of each user turn's first line (set to
-    -- "" to disable).
     user_prefix = "» ",
   },
   tool_output_max_lines = 14,
@@ -52,7 +53,7 @@ M.defaults = {
   tabline = true,
 
   -- ---- statusline ----------------------------------------------------------
-  subscription_usage = false,        -- see :h claude-subscription-usage
+  subscription_usage = true,         -- see :h claude-subscription-usage
 
   -- ---- desktop notifications ----------------------------------------------
   notifications = true,

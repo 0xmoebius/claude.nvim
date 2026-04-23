@@ -45,7 +45,7 @@ local function telescope_picker(origin_cwd, on_select)
   local rows = build_entries(origin_cwd)
 
   pickers.new({}, {
-    prompt_title = "cced — sessions",
+    prompt_title = "cc — sessions",
     finder = finders.new_table({
       results = rows,
       entry_maker = function(row)
@@ -75,7 +75,7 @@ end
 local function fallback_picker(origin_cwd, on_select)
   local rows = build_entries(origin_cwd)
   vim.ui.select(rows, {
-    prompt = "cced — pick a session:",
+    prompt = "cc — pick a session:",
     format_item = format_row,
   }, function(row)
     if row then on_select(row) end

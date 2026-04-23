@@ -52,9 +52,9 @@ Install the plugin (see README for plugin-manager snippets), then:
     require("claude").setup({})
 <
 Symlink the launcher onto PATH: >
-    ln -s /path/to/claude.nvim/bin/cced ~/.local/bin/cced
+    ln -s /path/to/claude.nvim/bin/cc ~/.local/bin/cc
 <
-Run `cced` in any shell. You'll get a picker across every Claude Code
+Run `cc` in any shell. You'll get a picker across every Claude Code
 session on your machine. Pick one, nvim opens in that session's cwd with
 the transcript and prompt wired up.
 
@@ -170,20 +170,21 @@ history ring, and tab-scoped always-allow list for permissions.
 ==============================================================================
 9. SUBSCRIPTION USAGE                              *claude-subscription-usage*
 
-Set `subscription_usage = true` to show the 5-hour quota usage in the
-statusline. This uses the UNDOCUMENTED endpoint:
+`subscription_usage = true` (default) shows the 5-hour quota usage in the
+winbar. This uses the UNDOCUMENTED endpoint:
 >
     POST https://api.anthropic.com/api/oauth/usage
 <
 with your Claude Code OAuth token read from the macOS keychain (or
 `~/.claude/.credentials.json`). Results are cached at
 `~/.cache/claude.nvim/usage.json` for 180s and rate-limited to one request
-per 30s, with 429 backoff honored. It is off by default because:
+per 30s, with 429 backoff honored. Set to false if:
 
-- The endpoint is not an official API and can change or disappear.
-- The plugin reads your OAuth token at runtime. While the token only flows
-  into the `curl` call that contacts api.anthropic.com, you should be aware
-  this happens.
+- You don't want an undocumented endpoint touched.
+- You'd prefer the plugin not read your OAuth token at runtime (it flows
+  only into the curl call to api.anthropic.com).
+
+Use `:ClaudeUsageDebug` to inspect the fetch state.
 
 
 ==============================================================================

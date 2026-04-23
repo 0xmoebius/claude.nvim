@@ -11,7 +11,7 @@
 local M = {}
 
 M.tabs = {}               -- tab_handle → record
-M.origin_cwd = nil        -- cwd of the cced caller; used by the picker
+M.origin_cwd = nil        -- cwd of the cc caller; used by the picker
 
 local function empty_record()
   return {

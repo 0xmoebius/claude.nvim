@@ -9,7 +9,7 @@ usage and git branch.
 
 ## Features
 
-- **`cced` launcher** — run it from any shell, anywhere. You get a fuzzy
+- **`cc` launcher** — run it from any shell, anywhere. You get a fuzzy
   picker across every Claude Code session on your machine, each row showing
   the project it belongs to, when you last touched it, and its first prompt.
 - **Real vim motions in the prompt.** The input is a normal nvim buffer;
@@ -22,16 +22,26 @@ usage and git branch.
 - **Shares sessions with the official CLI.** Reads and writes the same
   `~/.claude/projects/…/*.jsonl` store, so a session you start in nvim is
   visible in `claude -c` and vice versa.
-- **Live tool-call rendering.** `$ git status` for Bash, compact diffs for
-  Edit, truncated output with line counts for everything.
-- **Gutter bars.** Coloured `▎` in the sign column marks every line by role
-  (user / claude / tool / error) — no inline labels cluttering the view.
+- **Compact tool-call rendering.** Each call shows as a muted italic
+  one-liner (`↳ Bash ls -la`); output is hidden unless it's an error.
+- **User-turn styling.** User messages get a subtle background tint, bold
+  weight, and a `» ` prefix. Claude's replies are plain. Visually
+  distinct turns without cluttering the view with labels.
+- **Animated turn indicator.** Right-aligned spinner + phase + elapsed
+  time + queued count, rendered as a virt_text extmark on the prompt
+  pane (off the statusline, so it doesn't flicker).
+- **Message queueing.** Press send while a turn is in flight — your
+  message lands in the transcript immediately and auto-fires when the
+  previous turn completes.
+- **Winbar** at the top of each Claude window shows: git branch, context %,
+  optional 5-hour subscription usage %. No session id noise.
 - **Interactive permission prompts.** Optional: route tool-permission
   decisions into a nvim modal instead of auto-accepting.
 - **Desktop notifications** when a turn finishes — only when your terminal
   isn't frontmost, so you don't get pinged while reading the reply.
-- **Statusline**: git branch, context-window %, optional 5-hour
-  subscription usage %, short session id.
+- **Cross-pane navigation.** `k` at the top of the prompt jumps to the
+  transcript; `j` at an empty bottom of the transcript jumps back to the
+  prompt. `<leader>ca` / `<leader>ct` also work.
 
 ## Requirements
 
@@ -84,23 +94,28 @@ vim.opt.rtp:append("~/code/claude.nvim")
 require("claude").setup({})
 ```
 
-### The `cced` launcher
+### The `cc` launcher
 
 Symlink it onto your `$PATH`:
 
 ```sh
-ln -s ~/code/claude.nvim/bin/cced ~/.local/bin/cced
+ln -s ~/code/claude.nvim/bin/cc ~/.local/bin/cc
 ```
 
-`cced` is a self-bootstrapping shell script — it invokes nvim with the
+`cc` is a self-bootstrapping shell script — it invokes nvim with the
 plugin's runtimepath appended, so it works even if you haven't wired
 claude.nvim into your nvim config. If you _have_ wired it, the duplicate
 rtp entry is a no-op.
 
+> ⚠ `cc` is also the conventional name for the system C compiler on
+> Unix-likes (`/usr/bin/cc`). If you compile C code, this symlink shadows
+> it — either use `clang` / `gcc` directly, or rename to something else
+> (e.g. `ln -s ...bin/cc ~/.local/bin/cced` to keep the old name).
+
 ## Usage
 
 ```sh
-$ cced            # anywhere on disk — picker across all sessions
+$ cc            # anywhere on disk — picker across all sessions
 ```
 
 From inside nvim:
@@ -141,8 +156,9 @@ in lazy.nvim). Defaults:
 require("claude").setup({
   -- Claude CLI / subprocess
   claude_bin = "claude",
-  permission_mode = "acceptEdits",  -- used when ask_permissions=false
-  model = nil,                      -- nil inherits CLI default
+  dangerously_skip_permissions = true,  -- pass --dangerously-skip-permissions
+  permission_mode = "acceptEdits",      -- fallback when both perms off
+  model = nil,                          -- nil inherits CLI default
 
   -- Session discovery
   projects_dir = vim.fn.expand("~/.claude/projects"),
@@ -154,26 +170,30 @@ require("claude").setup({
     prompt_height_min = 6,
   },
 
-  -- Gutter signs
+  -- Role markers. Only errors get a gutter bar by default; user/assistant
+  -- rely on background tint / italic + inline prefix for differentiation.
   signs = {
     char = "▎",
-    user      = "ClaudeUserSign",
-    assistant = "ClaudeAssistantSign",
-    tool      = "ClaudeToolSign",
-    error     = "ClaudeErrorSign",
+    user = nil,           -- nil = no gutter bar for that role
+    assistant = nil,
+    tool = nil,
+    error = "ClaudeErrorSign",
+    user_prefix = "» ",   -- inline prefix on each user turn
   },
   tool_output_max_lines = 14,
 
-  -- Tabline / statusline
+  -- Winbar / tabline / subscription
   tabline = true,
-  subscription_usage = false,       -- see below
+  subscription_usage = true,            -- 5h quota in the winbar
 
   -- Desktop notifications
   notifications = true,
   notification_sound = "Glass",
   notification_terminal_apps = {},  -- extras, beyond the built-in list
 
-  -- Interactive permissions
+  -- Interactive permissions (off by default; when on, supersedes
+  -- dangerously_skip_permissions and routes every listed tool through a
+  -- nvim confirm)
   ask_permissions = false,
   permission_tools = { "Bash", "Write", "Edit" },
   permission_always_allow = {},
@@ -201,28 +221,31 @@ require("claude").setup({
 
 Override in your colorscheme or via `:hi`:
 
-| Group                     | Default link          | Role                          |
-|---------------------------|-----------------------|-------------------------------|
-| `ClaudeUserSign`          | `DiagnosticOk`        | Your message bar              |
-| `ClaudeAssistantSign`     | `Function`            | Claude's reply bar            |
-| `ClaudeToolSign`          | `DiagnosticWarn`      | Tool call/result bar          |
-| `ClaudeErrorSign`         | `DiagnosticError`     | Error bar                     |
-| `ClaudeTab` / `ClaudeTabSel` | `TabLine` / `TabLineSel` | Tabline background        |
+| Group                    | Default                    | Where it shows                |
+|--------------------------|----------------------------|-------------------------------|
+| `ClaudeUserLine`         | `CursorLine.bg` + bold     | Full-line bg tint on user rows |
+| `ClaudeUserPrefix`       | `ClaudeUserSign`           | `» ` prefix on user turns     |
+| `ClaudeAssistantSign`    | `Function`                 | Right-aligned spinner fg       |
+| `ClaudeToolLine`         | `Comment.fg` + italic      | Tool-call one-liners          |
+| `ClaudeErrorSign`        | `DiagnosticError`          | Gutter bar on error rows      |
+| `ClaudePromptBg`         | `NormalFloat`              | Prompt pane background         |
+| `ClaudeTab` / `ClaudeTabSel` | `TabLine` / `TabLineSel` | Tabline inactive / active    |
 
 ```lua
-vim.api.nvim_set_hl(0, "ClaudeUserSign",      { fg = "#a6e3a1" })
+vim.api.nvim_set_hl(0, "ClaudeUserLine",      { bg = "#2a2c3c", bold = true })
 vim.api.nvim_set_hl(0, "ClaudeAssistantSign", { fg = "#cba6f7" })
+vim.api.nvim_set_hl(0, "ClaudeToolLine",      { fg = "#6c7086", italic = true })
 ```
 
 ### Subscription usage
 
-Set `subscription_usage = true` to add a `5h XX%` segment to the statusline.
-When enabled, the plugin reads your Claude Code OAuth token from the macOS
-keychain (fallback: `~/.claude/.credentials.json`) and POSTs it to the
-**undocumented** endpoint `https://api.anthropic.com/api/oauth/usage` with a
-180s disk cache + 30s min-interval lock (same mechanism as `ccstatusline`).
-This is not an official API; it can break or rate-limit at any time. Off by
-default.
+`subscription_usage = true` (default) adds a `5h XX%` segment to the winbar.
+The plugin reads your Claude Code OAuth token from the macOS keychain
+(fallback: `~/.claude/.credentials.json`) and POSTs it to the **undocumented**
+endpoint `https://api.anthropic.com/api/oauth/usage` with a 180s disk cache
++ 30s min-interval lock (same mechanism as `ccstatusline`). This is not an
+official API; it can break or rate-limit at any time. Set to `false` to
+disable. `:ClaudeUsageDebug` prints the current fetch state.
 
 ### Interactive permissions
 
@@ -265,7 +288,7 @@ filename UUID; resume with `--resume`.
 ```
 claude.nvim/
 ├── bin/
-│   ├── cced                     shell launcher
+│   ├── cc                       shell launcher
 │   └── claude-nvim-auth         PreToolUse hook (Python 3)
 ├── lua/claude/
 │   ├── init.lua                 setup, launch, pick, new_here, quit
@@ -297,8 +320,21 @@ claude.nvim/
   calls `vim.fn.serverstart()` on first send, so this shouldn't happen
   unless your config disables servers. Check `:echo v:servername`.
 
-- **`ctx X%` doesn't update** — it's read from the `message_start.usage`
-  event of the most recent turn. Starts showing after your first send.
+- **`ctx X%` on resume** — seeded from the persisted `message.usage` in the
+  JSONL. On a fresh new session you start at `ctx 0%`; each subsequent turn
+  refreshes it from the `message_start.usage` event.
+
+- **Statusline flickers** — our status info is rendered in the **winbar**
+  (top of each Claude window), not the statusline. The bottom statusline is
+  whatever your plugin manager / AstroNvim / heirline normally draws; we
+  don't touch it. If the winbar itself flickers, AstroNvim may be
+  overriding it on `BufEnter` — we re-apply on `WinEnter`/`BufEnter`/
+  `TabEnter` but if a plugin fights harder, you may need to disable it.
+
+- **Turn hangs silently** — if `claude -p` hits a network/API issue it can
+  hang without emitting events. `<C-c>` in the prompt SIGINTs the
+  subprocess and resets state. (Your in-flight message won't be in the
+  JSONL because claude -p never persisted it.)
 
 - **Telescope picker doesn't find a session** — the picker only reads
   `~/.claude/projects/*/*.jsonl`. If a project doesn't show, check that

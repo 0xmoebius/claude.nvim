@@ -22,6 +22,18 @@ local function apply_defaults()
   set_hl("ClaudeTab", "TabLine")
   set_hl("ClaudeTabSel", "TabLineSel")
   set_hl("ClaudeUserPrefix", "ClaudeUserSign")    -- prefix colour matches bar
+  set_hl("ClaudePromptBg", "NormalFloat")         -- input pane tint
+  -- Explicit italic + fg copied from Comment so tool-call lines are
+  -- consistently italic regardless of whether the theme's Comment is.
+  local function comment_fg()
+    local ok, h = pcall(vim.api.nvim_get_hl, 0, { name = "Comment", link = false })
+    if ok and h and h.fg then return h.fg end
+  end
+  vim.api.nvim_set_hl(0, "ClaudeToolLine", {
+    fg = comment_fg(),
+    italic = true,
+    default = true,
+  })
 
   -- ClaudeUserLine: the bg tint on user rows. Needs to be bold + a real bg
   -- (linking to CursorLine was confusing because native cursorline shares
@@ -60,3 +72,13 @@ vim.api.nvim_create_user_command("ClaudeYankLast",
 vim.api.nvim_create_user_command("ClaudeQuit",
   function() require("claude").quit() end,
   { desc = "claude.nvim: close all Claude tabs and quit nvim" })
+vim.api.nvim_create_user_command("ClaudeUsageDebug", function()
+  local u = require("claude.usage")
+  print(u.debug())
+  u.refresh(function(d)
+    vim.schedule(function()
+      if d then print("refresh: success") else print("refresh: failed") end
+      print(u.debug())
+    end)
+  end)
+end, { desc = "claude.nvim: print subscription-usage fetch state" })

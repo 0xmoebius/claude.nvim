@@ -73,10 +73,28 @@ function M.open(session_cwd)
   vim.wo[rec.prompt_win].linebreak = true
   vim.wo[rec.prompt_win].number = false
   vim.wo[rec.prompt_win].relativenumber = false
+  -- Disable cursorline in the prompt: on some terminals (and with heirline
+  -- statusline configs) the cursorline-repaint on each keystroke bleeds
+  -- into a statusline redraw, producing visible flicker. We don't need
+  -- cursorline to know where the cursor is in a 1-line prompt.
+  vim.wo[rec.prompt_win].cursorline = false
+  vim.wo[rec.prompt_win].cursorcolumn = false
+  -- Differentiate the prompt pane from the transcript with a slight bg tint.
+  vim.wo[rec.prompt_win].winhighlight = "Normal:ClaudePromptBg,EndOfBuffer:ClaudePromptBg"
 
-  statusline.attach(rec.transcript_win)
-  statusline.attach(rec.prompt_win)
-  statusline.start_timer()
+  -- Kick off the subscription-usage fetch up front so "5h X%" appears as
+  -- soon as the layout is visible (instead of on first tick).
+  if require("claude.config").opts.subscription_usage then
+    pcall(function() require("claude.usage").get() end)
+  end
+  -- Push the winbar content (branch / ctx / usage) into both panes.
+  statusline.redraw()
+  -- Re-apply the winbar on window/tab enter events: some plugins
+  -- (heirline, lualine) reset winbar on focus events, which would make
+  -- our bar disappear.
+  vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "TabEnter" }, {
+    callback = function() statusline.redraw() end,
+  })
 
   vim.api.nvim_set_current_win(rec.prompt_win)
   vim.cmd("startinsert")
@@ -110,13 +128,16 @@ function M.focus(rec)
   end
 end
 
--- Focus the prompt pane (and enter insert mode).
-function M.focus_prompt(rec)
+-- Focus the prompt pane. By default also drops into insert mode — pass
+-- { insert = false } when a navigation keymap wants to stay in normal.
+function M.focus_prompt(rec, opts)
   if not rec then return end
-  if rec.prompt_win and vim.api.nvim_win_is_valid(rec.prompt_win) then
-    vim.api.nvim_set_current_win(rec.prompt_win)
-    vim.cmd("startinsert")
+  if not rec.prompt_win or not vim.api.nvim_win_is_valid(rec.prompt_win) then
+    return
   end
+  local insert = not opts or opts.insert ~= false
+  vim.api.nvim_set_current_win(rec.prompt_win)
+  if insert then vim.cmd("startinsert") end
 end
 
 -- Focus the transcript pane.

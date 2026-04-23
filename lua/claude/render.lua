@@ -53,18 +53,18 @@ end
 
 local function sign_line(buf, row, role)
   local s = config.opts.signs or {}
-  local hl = s[role]
-  if not hl then return end
-  local opts = {
-    sign_text = s.char or "▎",
-    sign_hl_group = hl,
-    right_gravity = false,
-  }
-  -- Give user messages a subtle background tint so the turn clearly stands
-  -- out from claude's freeform output.
+  local opts = { right_gravity = false }
+  -- Gutter bar (only roles with a hl configured get one)
+  local sign_hl = s[role]
+  if sign_hl then
+    opts.sign_text = s.char or "▎"
+    opts.sign_hl_group = sign_hl
+  end
+  -- User turns also get a full-line bg tint + bold (ClaudeUserLine).
   if role == "user" then
     opts.line_hl_group = "ClaudeUserLine"
   end
+  if not opts.sign_text and not opts.line_hl_group then return end
   vim.api.nvim_buf_set_extmark(buf, NS, row, 0, opts)
 end
 
@@ -93,7 +93,9 @@ function M.configure_window(win)
   vim.wo[win].list = false
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
-  vim.wo[win].signcolumn = "yes:1"
+  -- Sign column only appears when errors land in it. Keeps the chat view
+  -- flush against the edge when everything's healthy.
+  vim.wo[win].signcolumn = "auto:1"
   vim.wo[win].foldenable = false
   -- Disable native cursorline so the cursor position doesn't paint a
   -- ClaudeUserLine-coloured bg on claude's rows.
@@ -101,6 +103,8 @@ function M.configure_window(win)
 end
 
 function M.append_user(buf, text)
+  local s = state.find_by_buf(buf)
+  if s then s._last_kind = "user" end
   buf_ensure_newline(buf)
   -- One blank line above a user turn, unless we're at buffer start.
   if vim.api.nvim_buf_line_count(buf) > 1 then
@@ -136,20 +140,31 @@ function M.begin_assistant(buf)
   if s then
     s.last_assistant_start = start_row
     s._assistant_tagged_to = start_row - 1
+    s._last_kind = nil
   end
-  sign_line(buf, start_row, "assistant")
-  if s then s._assistant_tagged_to = start_row end
   autoscroll(buf)
 end
 
 function M.append_assistant_delta(buf, text)
   local s = state.find_by_buf(buf)
+  -- When resuming assistant text after a tool call, insert a blank line
+  -- separator so tool blocks visually detach from the surrounding prose.
+  if s and s._last_kind == "tool" then
+    buf_ensure_newline(buf)
+    append_blank_line(buf)
+    if s.last_assistant_start then
+      s._assistant_tagged_to = vim.api.nvim_buf_line_count(buf) - 2
+    end
+  end
   buf_append(buf, text)
-  if s and s._assistant_tagged_to ~= nil then
+  if s and s.last_assistant_start then
     local end_row = vim.api.nvim_buf_line_count(buf) - 1
-    sign_range(buf, s._assistant_tagged_to + 1, end_row, "assistant")
+    local from = (s._assistant_tagged_to or (s.last_assistant_start - 1)) + 1
+    if from < s.last_assistant_start then from = s.last_assistant_start end
+    sign_range(buf, from, end_row, "assistant")
     s._assistant_tagged_to = end_row
   end
+  if s then s._last_kind = "assistant" end
   autoscroll(buf)
 end
 
@@ -171,47 +186,44 @@ local function count_lines(s)
   return n
 end
 
-local function format_tool_header(name, input)
+-- Compact one-line summary: `Bash <command>`, `Read <path>`, etc.
+-- Truncated so the line fits on screen.
+local function format_tool_compact(name, input)
   input = input or {}
+  local s
   if name == "Bash" then
-    local cmd = input.command or "?"
-    local desc = input.description and ("   # " .. input.description) or ""
-    return "$ " .. cmd .. desc
+    s = "Bash " .. (input.command or "?")
   elseif name == "Read" then
-    local s = "Read " .. (input.file_path or "?")
-    if input.offset or input.limit then
-      s = s .. string.format("  (%s:%s)",
-        tostring(input.offset or ""), tostring(input.limit or ""))
-    end
-    return s
+    s = "Read " .. (input.file_path or "?")
   elseif name == "Write" then
-    return string.format("Write %s  (%d lines)",
+    s = string.format("Write %s (%d lines)",
       input.file_path or "?", count_lines(input.content))
   elseif name == "Edit" then
-    return "Edit " .. (input.file_path or "?")
+    s = "Edit " .. (input.file_path or "?")
   elseif name == "Grep" then
-    local s = "Grep '" .. (input.pattern or "?") .. "'"
+    s = "Grep " .. (input.pattern or "?")
     if input.path then s = s .. " in " .. input.path end
-    return s
   elseif name == "Glob" then
-    local s = "Glob '" .. (input.pattern or "?") .. "'"
+    s = "Glob " .. (input.pattern or "?")
     if input.path then s = s .. " in " .. input.path end
-    return s
   elseif name == "Task" then
-    return "Task " .. (input.subagent_type or "")
+    s = "Task " .. (input.subagent_type or "")
       .. (input.description and (": " .. input.description) or "")
   elseif name == "TodoWrite" then
-    return "TodoWrite"
+    s = "TodoWrite"
   elseif name == "WebFetch" then
-    return "WebFetch " .. (input.url or "?")
+    s = "WebFetch " .. (input.url or "?")
   elseif name == "WebSearch" then
-    return "WebSearch '" .. (input.query or "?") .. "'"
+    s = "WebSearch " .. (input.query or "?")
   else
-    local preview = ""
-    if input and next(input) then preview = vim.json.encode(input) end
-    if #preview > 120 then preview = preview:sub(1, 117) .. "…" end
-    return name .. (preview ~= "" and ("  " .. preview) or "")
+    s = name
   end
+  -- Strip newlines and collapse runs of whitespace so the call stays on one
+  -- visual line even for multi-line Bash heredocs.
+  s = s:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+  local max = 140
+  if #s > max then s = s:sub(1, max - 1) .. "…" end
+  return s
 end
 
 local function format_edit_diff(input)
@@ -237,23 +249,30 @@ local function truncate_lines(lines, max)
   return out, true
 end
 
+-- Tool calls render as a single flush-left, muted-italic one-liner — no
+-- diff, no output. Full details are still in the session JSONL on disk if
+-- you need them.
 function M.append_tool_call(buf, call)
   buf_ensure_newline(buf)
-  local start_row = vim.api.nvim_buf_line_count(buf) - 1
-  buf_append(buf, format_tool_header(call.name, call.input))
-  if call.name == "Edit" and call.input then
-    buf_ensure_newline(buf)
-    local diff = format_edit_diff(call.input)
-    diff = truncate_lines(diff, max_output_lines())
-    buf_append(buf, table.concat(diff, "\n"))
-  end
-  local end_row = vim.api.nvim_buf_line_count(buf) - 1
+  local row = vim.api.nvim_buf_line_count(buf) - 1
+  buf_append(buf, "↳ " .. format_tool_compact(call.name, call.input))
   buf_ensure_newline(buf)
-  sign_range(buf, start_row, end_row, "tool")
+  vim.api.nvim_buf_set_extmark(buf, NS, row, 0, {
+    line_hl_group = "ClaudeToolLine",
+    right_gravity = false,
+  })
+  -- Mark current write kind so append_assistant_delta knows whether it's
+  -- resuming from a tool and should insert a separator blank line.
+  local s = state.find_by_buf(buf)
+  if s then s._last_kind = "tool" end
   autoscroll(buf)
 end
 
+-- Tool results are noisy. We skip them entirely unless they're an error,
+-- in which case we render the first few lines so debugging is still
+-- possible.
 function M.append_tool_result(buf, result)
+  if not result.is_error then return end
   if not result.text or result.text == "" then return end
   local lines = vim.split(result.text, "\n", { plain = true })
   lines = truncate_lines(lines, max_output_lines())
@@ -263,7 +282,7 @@ function M.append_tool_result(buf, result)
   buf_append(buf, indented)
   local end_row = vim.api.nvim_buf_line_count(buf) - 1
   buf_ensure_newline(buf)
-  sign_range(buf, start_row, end_row, result.is_error and "error" or "tool")
+  sign_range(buf, start_row, end_row, "error")
   autoscroll(buf)
 end
 

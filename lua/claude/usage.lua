@@ -169,4 +169,30 @@ function M.refresh(cb)
   fetch_async(function(d) if cb then cb(d) end end)
 end
 
+-- Diagnostic: reports where we are in the fetch pipeline. Safe to call
+-- anytime; never leaks the token.
+function M.debug()
+  local lines = {}
+  local function add(k, v) table.insert(lines, k .. ": " .. tostring(v)) end
+  local token = get_token()
+  add("token found", token and "yes (" .. #token .. " chars)" or "no")
+  add("memory cache", mem.data and "hit" or "miss")
+  if mem.data then add("fetched_at", os.date("%c", mem.fetched_at)) end
+  add("file cache",
+    vim.uv.fs_stat(cache_file) and "exists at " .. cache_file or "none")
+  add("lock file",
+    vim.uv.fs_stat(lock_file) and "exists at " .. lock_file or "none")
+  add("backoff until", backoff_until > os.time()
+    and os.date("%c", backoff_until) or "none")
+  add("fetching now", fetching and "yes" or "no")
+  local d = mem.data or read_file_cache()
+  if d then
+    add("five_hour.utilization", d.five_hour and d.five_hour.utilization or "?")
+    if d.five_hour and d.five_hour.resets_at then
+      add("five_hour.resets_at", os.date("%c", d.five_hour.resets_at))
+    end
+  end
+  return table.concat(lines, "\n")
+end
+
 return M

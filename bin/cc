@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cced — launch claude.nvim from anywhere.
+# cc — launch claude.nvim from anywhere.
 #
 # Opens nvim and triggers the cross-project session picker. If a session is
 # picked, nvim cd's into that session's recorded cwd. Otherwise starts a new
