@@ -1,0 +1,233 @@
+*claude.txt*  A vim-native alternative frontend for Claude Code.
+
+Author: neo <moebius@wonderland.xyz>
+License: MIT
+Homepage: https://github.com/your-fork/claude.nvim
+
+
+==============================================================================
+CONTENTS                                                      *claude-contents*
+
+  1. Introduction ........................... |claude-introduction|
+  2. Requirements ........................... |claude-requirements|
+  3. Quick start ............................ |claude-quick-start|
+  4. Commands ............................... |claude-commands|
+  5. Keymaps ................................ |claude-keymaps|
+  6. Configuration .......................... |claude-config|
+  7. Highlights ............................. |claude-highlights|
+  8. How it works ........................... |claude-internals|
+  9. Subscription usage ..................... |claude-subscription-usage|
+ 10. Interactive permissions ................ |claude-permissions|
+ 11. Troubleshooting ........................ |claude-troubleshooting|
+
+
+==============================================================================
+1. INTRODUCTION                                          *claude-introduction*
+
+claude.nvim is an alternative frontend for the Claude Code CLI. You get a
+cross-project session picker, per-session vim tabs, a real buffer for the
+prompt, live streaming of assistant responses into a markdown buffer,
+gutter-bar role markers, and a status bar showing the current context
+percentage, git branch, and optional subscription usage.
+
+The plugin shells out to `claude -p --output-format stream-json` under the
+hood; it reads and writes the same ~/.claude/projects/ JSONL store as the
+official CLI, so sessions are shared across both.
+
+
+==============================================================================
+2. REQUIREMENTS                                          *claude-requirements*
+
+- Neovim ≥ 0.10
+- `claude` CLI on $PATH
+- Python 3 (only for the permission-forwarding hook; stdlib only)
+- Optional: telescope.nvim, oil.nvim or neo-tree.nvim
+
+
+==============================================================================
+3. QUICK START                                            *claude-quick-start*
+
+Install the plugin (see README for plugin-manager snippets), then:
+>
+    require("claude").setup({})
+<
+Symlink the launcher onto PATH: >
+    ln -s /path/to/claude.nvim/bin/cced ~/.local/bin/cced
+<
+Run `cced` in any shell. You'll get a picker across every Claude Code
+session on your machine. Pick one, nvim opens in that session's cwd with
+the transcript and prompt wired up.
+
+
+==============================================================================
+4. COMMANDS                                                  *claude-commands*
+
+                                                                      *:Claude*
+:Claude             Open the cross-project session picker. Alias for
+                    |claude.launch|.
+
+                                                                  *:ClaudePick*
+:ClaudePick         Same picker; when you pick a session already open in a
+                    tab, jumps to it instead of duplicating.
+
+                                                                   *:ClaudeNew*
+:ClaudeNew          Start a new session in the current cwd. Opens in a new
+                    tab.
+
+                                                                  *:ClaudeSend*
+:ClaudeSend         Send the prompt buffer contents. Also bound to <CR> in
+                    normal mode inside the prompt buffer.
+
+                                                             *:ClaudeInterrupt*
+:ClaudeInterrupt    SIGINT the current turn's subprocess.
+
+                                                             *:ClaudeYankBlock*
+:ClaudeYankBlock    Yank the fenced code block under cursor (without the
+                    backticks) to the `+` register.
+
+                                                              *:ClaudeYankLast*
+:ClaudeYankLast     Yank the most recent assistant reply to `+`.
+
+                                                                  *:ClaudeQuit*
+:ClaudeQuit         Close all Claude tabs, wipe buffers, kill in-flight
+                    jobs, and quit nvim if no other tabs remain.
+
+
+==============================================================================
+5. KEYMAPS                                                    *claude-keymaps*
+
+All keymaps are buffer-local to Claude panes and configurable via
+|claude-config|. Defaults:
+>
+    <CR>          prompt → send (normal mode)
+    <C-c>         prompt → interrupt turn
+    <leader>ca    focus prompt (insert mode)
+    <leader>ct    focus transcript
+    i/a/o/I/A/O   transcript → focus prompt (read-only redirect)
+    ]m / [m       transcript → next / prev message marker
+    <leader>cs    picker (new tab)
+    <leader>cn    new session in cwd
+    <leader>cq    close this Claude tab
+    <leader>cQ    quit: close all + exit nvim
+    <leader>cy    yank last assistant reply
+    gy            transcript → yank fenced code block
+    gt / gT       switch between tabs (vim native)
+<
+
+
+==============================================================================
+6. CONFIGURATION                                               *claude-config*
+
+Set any option by passing it to |claude.setup|. The defaults are listed in
+the README; a minimal override example: >
+
+    require("claude").setup({
+      permission_mode = "bypassPermissions",
+      subscription_usage = true,
+      keymaps = {
+        send = "<S-CR>",    -- use Shift-Enter instead of plain Enter
+        pick = false,       -- disable the picker keymap
+      },
+      layout = {
+        files_width = 0.2,
+        prompt_height = 0.25,
+      },
+    })
+<
+
+
+==============================================================================
+7. HIGHLIGHTS                                              *claude-highlights*
+
+claude.nvim defines the following highlight groups (all created with
+`default = true`, so your colorscheme wins):
+>
+    ClaudeUserSign       → DiagnosticOk     (your message bar)
+    ClaudeAssistantSign  → Function         (claude's reply bar)
+    ClaudeToolSign       → DiagnosticWarn   (tool calls/results)
+    ClaudeErrorSign      → DiagnosticError  (errors)
+    ClaudeTab            → TabLine          (tabline, inactive tab)
+    ClaudeTabSel         → TabLineSel       (tabline, active tab)
+<
+Override directly: >
+    vim.api.nvim_set_hl(0, "ClaudeAssistantSign", { fg = "#cba6f7" })
+<
+
+
+==============================================================================
+8. HOW IT WORKS                                             *claude-internals*
+
+Per turn, the plugin spawns `claude -p` with stream-json output and pipes
+your prompt to stdin. Stdout is parsed line-by-line; events become calls
+into the renderer via `vim.schedule`. Session identity is the JSONL file's
+UUID; continuing a session is just `--resume <uuid>`.
+
+State lives per-tab in |state.tabs|, keyed by tab handle. Each record holds
+the session id, cwd, buffer handles, in-flight job, last observed usage,
+history ring, and tab-scoped always-allow list for permissions.
+
+
+==============================================================================
+9. SUBSCRIPTION USAGE                              *claude-subscription-usage*
+
+Set `subscription_usage = true` to show the 5-hour quota usage in the
+statusline. This uses the UNDOCUMENTED endpoint:
+>
+    POST https://api.anthropic.com/api/oauth/usage
+<
+with your Claude Code OAuth token read from the macOS keychain (or
+`~/.claude/.credentials.json`). Results are cached at
+`~/.cache/claude.nvim/usage.json` for 180s and rate-limited to one request
+per 30s, with 429 backoff honored. It is off by default because:
+
+- The endpoint is not an official API and can change or disappear.
+- The plugin reads your OAuth token at runtime. While the token only flows
+  into the `curl` call that contacts api.anthropic.com, you should be aware
+  this happens.
+
+
+==============================================================================
+10. INTERACTIVE PERMISSIONS                                *claude-permissions*
+
+Set `ask_permissions = true` to route tool permissions into nvim:
+>
+    ask_permissions = true,
+    permission_tools = { "Bash", "Write", "Edit" },
+    permission_always_allow = { "Read", "Grep", "Glob" },
+<
+On any listed tool, Claude pauses until you pick Yes / No / Always via
+`vim.fn.confirm()`. "Always" is scoped to the current tab.
+
+Mechanics: the plugin passes a PreToolUse hook in a one-off `--settings`
+JSON blob to `claude -p`. The hook invokes `bin/claude-nvim-auth` (Python),
+which calls back into nvim via `--remote-expr` on |v:servername|. The
+return value travels back to Claude as the hook's permissionDecision.
+
+
+==============================================================================
+11. TROUBLESHOOTING                                   *claude-troubleshooting*
+
+`:echo v:servername`
+                    Should be non-empty. The plugin calls |serverstart()|
+                    on first launch; if your init explicitly prevents
+                    sockets, permissions forwarding can't work.
+
+`:messages`
+                    All errors from async handlers land here.
+
+`:ClaudeInterrupt`
+                    Cancel a stuck turn. The job is SIGINTed; state is
+                    cleared.
+
+Picker shows no sessions
+                    Check `ls ~/.claude/projects/*/*.jsonl`. If the
+                    directory is empty, run `claude` at least once to
+                    create a session.
+
+5h shows "—"
+                    Either `subscription_usage = false`, or the OAuth
+                    fetch failed (no token, 429, or network error). Check
+                    `~/.cache/claude.nvim/usage.json`.
+
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# cced — launch claude.nvim from anywhere.
+#
+# Opens nvim and triggers the cross-project session picker. If a session is
+# picked, nvim cd's into that session's recorded cwd. Otherwise starts a new
+# session in $PWD.
+#
+# Self-bootstraps the plugin's runtimepath so no user config edits are
+# needed. If you've already added the plugin via lazy.nvim or similar, the
+# duplicate rtp entry is a no-op.
+
+set -euo pipefail
+
+# Resolve plugin root from this script's path. Handle symlinks on macOS
+# (BSD readlink has no -f; use a loop).
+resolve_symlink() {
+  local src="$1"
+  while [ -L "$src" ]; do
+    local dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in
+      /*) : ;;
+      *) src="$dir/$src" ;;
+    esac
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_symlink "$0")"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Add the plugin to rtp and source its plugin/ file so the :Claude commands
+# exist in this session, then hand off to the picker.
+exec nvim \
+  -c "set runtimepath+=$PLUGIN_ROOT" \
+  -c "runtime! plugin/claude.lua" \
+  -c "lua require('claude').launch({ origin_cwd = vim.fn.fnamemodify('$PWD', ':p') })"

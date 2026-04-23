@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""
+PreToolUse hook for claude.nvim.
+
+Reads the hook payload from stdin, forwards the tool name + input to the
+running nvim instance via --remote-expr, and prints the decision on stdout
+in the format Claude Code expects.
+
+Environment:
+  CLAUDE_NVIM_SOCKET   Path to v:servername of the caller nvim (required).
+  CLAUDE_NVIM_TIMEOUT  Optional override for the remote-expr timeout (seconds).
+
+Exit code is always 0; decisions travel via the JSON on stdout.
+"""
+
+from __future__ import annotations
+import json
+import os
+import shlex
+import subprocess
+import sys
+
+
+def respond(decision: str, reason: str) -> None:
+    sys.stdout.write(json.dumps({
+        "continue": True,
+        "suppressOutput": True,
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        },
+    }))
+    sys.stdout.write("\n")
+    sys.exit(0)
+
+
+def main() -> None:
+    try:
+        payload = json.load(sys.stdin)
+    except Exception as e:
+        respond("deny", f"hook payload parse error: {e}")
+
+    tool_name = payload.get("tool_name", "?")
+    tool_input = payload.get("tool_input", {})
+
+    sock = os.environ.get("CLAUDE_NVIM_SOCKET", "").strip()
+    if not sock:
+        respond("deny", "claude.nvim: no CLAUDE_NVIM_SOCKET set")
+
+    timeout_s = int(os.environ.get("CLAUDE_NVIM_TIMEOUT", "3600"))
+
+    # Serialize the call as a Vim expression. Double-encode the JSON so the
+    # lua side sees a JSON string and can vim.json.decode() it.
+    tool_name_lit = json.dumps(tool_name)
+    tool_input_lit = json.dumps(json.dumps(tool_input))
+    expr = (
+        f'v:lua.require("claude.permissions").prompt('
+        f'{tool_name_lit}, {tool_input_lit})'
+    )
+
+    try:
+        result = subprocess.run(
+            ["nvim", "--server", sock, "--remote-expr", expr],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        respond("deny", "claude.nvim: nvim prompt timed out")
+        return
+    except FileNotFoundError:
+        respond("deny", "claude.nvim: nvim binary not on PATH")
+        return
+
+    out = (result.stdout or "").strip()
+    if out == "allow":
+        respond("allow", "claude.nvim: user approved")
+    elif out == "deny":
+        respond("deny", "claude.nvim: user denied")
+    else:
+        respond("deny", f"claude.nvim: unexpected nvim response: {out!r}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# editor cruft
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# lua
+*.so
+*.o
+
+# nvim testing artifacts
+.tests/
+/tmp/
+
+# lazy.nvim lock files from consumers (we don't ship one)
+lazy-lock.json
+
+# OS / shell
+.netrwhist
