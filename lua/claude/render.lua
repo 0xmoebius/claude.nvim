@@ -27,7 +27,17 @@ local function buf_ensure_newline(buf)
   end
 end
 
+-- Throttle cursor-pinning so streaming many small deltas doesn't slam the
+-- redraw path. We miss at most ~33ms of "catch-up"; a trailing autoscroll
+-- fires naturally on the next append, and end_assistant's buf_ensure_newline
+-- always triggers one more.
+local AUTOSCROLL_THROTTLE_NS = 33 * 1e6
+local autoscroll_last = {}
+
 local function autoscroll(buf)
+  local now = (vim.uv or vim.loop).hrtime()
+  if (autoscroll_last[buf] or 0) + AUTOSCROLL_THROTTLE_NS > now then return end
+  autoscroll_last[buf] = now
   local s = state.find_by_buf(buf)
   if not s or not s.transcript_win or not vim.api.nvim_win_is_valid(s.transcript_win) then
     return
@@ -45,11 +55,22 @@ local function sign_line(buf, row, role)
   local s = config.opts.signs or {}
   local hl = s[role]
   if not hl then return end
-  vim.api.nvim_buf_set_extmark(buf, NS, row, 0, {
+  local opts = {
     sign_text = s.char or "▎",
     sign_hl_group = hl,
     right_gravity = false,
-  })
+  }
+  -- Give user messages a subtle background tint so the turn clearly stands
+  -- out from claude's freeform output.
+  if role == "user" then
+    opts.line_hl_group = "ClaudeUserLine"
+  end
+  vim.api.nvim_buf_set_extmark(buf, NS, row, 0, opts)
+end
+
+local function append_blank_line(buf)
+  local lc = vim.api.nvim_buf_line_count(buf)
+  vim.api.nvim_buf_set_lines(buf, lc, lc, false, { "" })
 end
 
 local function sign_range(buf, from_row, to_row, role)
@@ -74,15 +95,37 @@ function M.configure_window(win)
   vim.wo[win].relativenumber = false
   vim.wo[win].signcolumn = "yes:1"
   vim.wo[win].foldenable = false
+  -- Disable native cursorline so the cursor position doesn't paint a
+  -- ClaudeUserLine-coloured bg on claude's rows.
+  vim.wo[win].cursorline = false
 end
 
 function M.append_user(buf, text)
   buf_ensure_newline(buf)
+  -- One blank line above a user turn, unless we're at buffer start.
+  if vim.api.nvim_buf_line_count(buf) > 1 then
+    append_blank_line(buf)
+  end
   local start_row = vim.api.nvim_buf_line_count(buf) - 1
   buf_append(buf, text)
   local end_row = vim.api.nvim_buf_line_count(buf) - 1
   buf_ensure_newline(buf)
+  -- Two trailing blanks: one is space below the user turn, the other gets
+  -- absorbed by begin_assistant when claude's reply arrives (the first
+  -- delta fills it). Net: a clear gap between "you" and "claude".
+  append_blank_line(buf)
+  append_blank_line(buf)
   sign_range(buf, start_row, end_row, "user")
+  -- Inline prefix character on the first row so "you" is visually identified
+  -- without a dedicated virt_line label.
+  local prefix = (config.opts.signs and config.opts.signs.user_prefix) or "» "
+  if prefix ~= "" then
+    vim.api.nvim_buf_set_extmark(buf, NS, start_row, 0, {
+      virt_text = { { prefix, "ClaudeUserPrefix" } },
+      virt_text_pos = "inline",
+      right_gravity = false,
+    })
+  end
   autoscroll(buf)
 end
 
@@ -112,6 +155,9 @@ end
 
 function M.end_assistant(buf)
   buf_ensure_newline(buf)
+  -- Force a final scroll to EOF, bypassing the streaming throttle.
+  autoscroll_last[buf] = 0
+  autoscroll(buf)
 end
 
 local function max_output_lines()

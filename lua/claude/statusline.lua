@@ -18,8 +18,28 @@ local function context_pct(rec)
   return rec.context_tokens / rec.context_window * 100
 end
 
+local function fmt_elapsed(started)
+  local s = os.time() - started
+  if s < 60 then return string.format("%ds", s) end
+  local m = math.floor(s / 60)
+  return string.format("%dm%02ds", m, s - m * 60)
+end
+
+-- Braille dot spinner, one frame per tick. 10-frame cycle at 100ms/frame
+-- renders as a smooth rotation.
+local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+
 function M.render(rec)
   local parts = {}
+
+  -- Live in-flight indicator with animated spinner. The per-turn timer in
+  -- prompt.lua bumps rec.spinner_idx every 100ms and redraws this.
+  if rec.turn_started_at then
+    local phase = rec.turn_phase or "working"
+    local frame = SPINNER[((rec.spinner_idx or 0) % #SPINNER) + 1]
+    table.insert(parts,
+      frame .. " " .. phase .. " " .. fmt_elapsed(rec.turn_started_at))
+  end
 
   local branch = git.branch(rec.session_cwd)
   if branch then table.insert(parts, " " .. branch) end

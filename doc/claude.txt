@@ -107,8 +107,8 @@ All keymaps are buffer-local to Claude panes and configurable via
     ]m / [m       transcript → next / prev message marker
     <leader>cs    picker (new tab)
     <leader>cn    new session in cwd
-    <leader>cq    close this Claude tab
-    <leader>cQ    quit: close all + exit nvim
+    <leader>cc    close this Claude tab
+    <leader>cq    quit: close all + exit nvim
     <leader>cy    yank last assistant reply
     gy            transcript → yank fenced code block
     gt / gT       switch between tabs (vim native)

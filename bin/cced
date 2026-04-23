@@ -29,6 +29,15 @@ resolve_symlink() {
 SCRIPT_DIR="$(resolve_symlink "$0")"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Raise the soft file-descriptor limit for the nvim process. macOS defaults
+# to 256 which an LSP-heavy setup (AstroNvim + multiple language servers +
+# neo-tree watchers) can exhaust, causing `require` calls deep in telescope /
+# other lazy-loaded paths to fail with "Too many open files".
+#
+# We only raise the soft limit — the hard limit (kern.maxfilesperproc) isn't
+# touched. 10240 is a reasonable ceiling. Any bump failure is ignored.
+ulimit -n 10240 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+
 # Add the plugin to rtp and source its plugin/ file so the :Claude commands
 # exist in this session, then hand off to the picker.
 exec nvim \

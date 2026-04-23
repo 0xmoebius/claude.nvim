@@ -22,7 +22,6 @@ local function empty_record()
     transcript_win = nil,
     prompt_buf = nil,
     prompt_win = nil,
-    files_win = nil,
     job = nil,
     last_assistant_start = nil,
     history = {},
@@ -32,6 +31,9 @@ local function empty_record()
     model = nil,
     permission_always = {}, -- session-scoped always-allow list
     turn_seq = 0,           -- incremented per send (for unique buf names, etc.)
+    turn_started_at = nil,  -- os.time() when current turn was sent, nil when idle
+    turn_phase = nil,       -- "thinking" | "streaming" | nil
+    turn_timer = nil,       -- uv timer that ticks the statusline while a turn runs
   }
 end
 

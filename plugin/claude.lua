@@ -6,7 +6,14 @@ vim.g.loaded_claude_nvim = 1
 local function set_hl(name, link)
   vim.api.nvim_set_hl(0, name, { link = link, default = true })
 end
--- Gutter-bar colors per role. Override in your colorscheme to taste.
+-- Derive ClaudeUserLine from the theme's CursorLine bg (falling back to
+-- Visual if CursorLine isn't defined) and make it bold + defaultable.
+local function resolve_bg(name)
+  local ok, h = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+  if ok and h and h.bg then return h.bg end
+  return nil
+end
+
 local function apply_defaults()
   set_hl("ClaudeUserSign", "DiagnosticOk")        -- green-ish
   set_hl("ClaudeAssistantSign", "Function")       -- theme accent
@@ -14,6 +21,18 @@ local function apply_defaults()
   set_hl("ClaudeErrorSign", "DiagnosticError")    -- red
   set_hl("ClaudeTab", "TabLine")
   set_hl("ClaudeTabSel", "TabLineSel")
+  set_hl("ClaudeUserPrefix", "ClaudeUserSign")    -- prefix colour matches bar
+
+  -- ClaudeUserLine: the bg tint on user rows. Needs to be bold + a real bg
+  -- (linking to CursorLine was confusing because native cursorline shares
+  -- the same colour). Copy CursorLine/Visual bg; keep default=true so user
+  -- overrides still win.
+  local bg = resolve_bg("CursorLine") or resolve_bg("Visual")
+  vim.api.nvim_set_hl(0, "ClaudeUserLine", {
+    bg = bg,
+    bold = true,
+    default = true,
+  })
 end
 apply_defaults()
 vim.api.nvim_create_autocmd("ColorScheme", { callback = apply_defaults })

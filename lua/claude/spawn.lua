@@ -47,6 +47,8 @@ local function build_args(opts)
     local settings = build_permission_settings()
     table.insert(argv, "--settings")
     table.insert(argv, vim.json.encode(settings))
+  elseif config.opts.dangerously_skip_permissions then
+    table.insert(argv, "--dangerously-skip-permissions")
   else
     table.insert(argv, "--permission-mode")
     table.insert(argv, opts.permission_mode or config.opts.permission_mode)

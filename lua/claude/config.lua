@@ -3,6 +3,12 @@ local M = {}
 M.defaults = {
   -- ---- subprocess ----------------------------------------------------------
   claude_bin = "claude",
+  -- `--dangerously-skip-permissions` bypasses all tool-permission checks.
+  -- On by default here because this plugin is typically launched in trusted
+  -- local dirs. Set false to fall back to `permission_mode`.
+  -- Superseded when `ask_permissions = true` — the PreToolUse hook gates
+  -- everything in that path.
+  dangerously_skip_permissions = true,
   permission_mode = "acceptEdits",
   model = nil,                       -- nil inherits the Claude Code CLI's default
 
@@ -25,7 +31,6 @@ M.defaults = {
 
   -- ---- layout (all values 0.0–1.0 of available space) ---------------------
   layout = {
-    files_width = 0.25,   -- right-side file pane, fraction of window width
     prompt_height = 0.33, -- bottom prompt pane, fraction of transcript height
     prompt_height_min = 6,
   },
@@ -37,6 +42,9 @@ M.defaults = {
     assistant = "ClaudeAssistantSign",
     tool = "ClaudeToolSign",
     error = "ClaudeErrorSign",
+    -- Inline prefix drawn at col 0 of each user turn's first line (set to
+    -- "" to disable).
+    user_prefix = "» ",
   },
   tool_output_max_lines = 14,
 
@@ -68,8 +76,8 @@ M.defaults = {
     new_here        = "<leader>cn",
     yank_last       = "<leader>cy",
     yank_block      = "gy",
-    close_tab       = "<leader>cq",
-    quit_all        = "<leader>cQ",
+    close_tab       = "<leader>cc",
+    quit_all        = "<leader>cq",
     next_marker     = "]m",
     prev_marker     = "[m",
     -- Transcript is read-only: these keys redirect to the prompt in insert

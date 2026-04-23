@@ -124,8 +124,8 @@ From inside nvim:
 | `]m` / `[m` (transcript)         | Jump next / prev message                     |
 | `<leader>cs`                     | Open picker (new tab)                        |
 | `<leader>cn`                     | New session in cwd                           |
-| `<leader>cq`                     | Close this Claude tab                        |
-| `<leader>cQ`                     | Close all + quit nvim                        |
+| `<leader>cc`                     | Close this Claude tab                        |
+| `<leader>cq`                     | Close all + quit nvim                        |
 | `<leader>cy`                     | Yank last assistant reply                    |
 | `gy` (transcript)                | Yank fenced code block under cursor          |
 | `gt` / `gT`                      | Switch between Claude tabs (vim native)      |
@@ -150,7 +150,6 @@ require("claude").setup({
 
   -- Layout (fractions of available space)
   layout = {
-    files_width = 0.25,
     prompt_height = 0.33,
     prompt_height_min = 6,
   },
@@ -189,8 +188,8 @@ require("claude").setup({
     new_here         = "<leader>cn",
     yank_last        = "<leader>cy",
     yank_block       = "gy",
-    close_tab        = "<leader>cq",
-    quit_all         = "<leader>cQ",
+    close_tab        = "<leader>cc",
+    quit_all         = "<leader>cq",
     next_marker      = "]m",
     prev_marker      = "[m",
     transcript_to_insert = { "i", "a", "o", "I", "A", "O" },

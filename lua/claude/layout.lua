@@ -54,28 +54,11 @@ function M.open(session_cwd)
   rec.transcript_win = vim.api.nvim_get_current_win()
   render.configure_window(rec.transcript_win)
 
-  -- File pane on right
+  -- No file pane; the user's own file explorer (neo-tree, oil, netrw, …)
+  -- handles that — just open it when you want it and close when done.
   local layout_cfg = require("claude.config").opts.layout or {}
-  vim.cmd("rightbelow vsplit")
-  rec.files_win = vim.api.nvim_get_current_win()
-  local files_w = math.floor(vim.o.columns * (layout_cfg.files_width or 0.25))
-  vim.api.nvim_win_set_width(rec.files_win, files_w)
-  local scratch = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_win_set_buf(rec.files_win, scratch)
-  local files_cwd = session_cwd and session_cwd ~= "" and session_cwd or vim.fn.getcwd()
-  local opened = false
-  if pcall(vim.cmd, "Oil " .. vim.fn.fnameescape(files_cwd)) then
-    opened = true
-  elseif pcall(vim.cmd, string.format(
-      "Neotree filesystem position=current dir=%s", vim.fn.fnameescape(files_cwd))) then
-    opened = true
-  end
-  if not opened then
-    pcall(vim.cmd, "Explore " .. vim.fn.fnameescape(files_cwd))
-  end
 
-  -- Back to transcript → prompt split below
-  vim.api.nvim_set_current_win(rec.transcript_win)
+  -- Prompt split below transcript
   vim.cmd("belowright split")
   rec.prompt_win = vim.api.nvim_get_current_win()
   rec.prompt_buf = make_prompt_buf(seq)

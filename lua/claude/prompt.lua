@@ -60,6 +60,24 @@ function M.send()
 
   local turn = { had_error = false, error_text = nil }
 
+  -- Start a turn timer: advances the spinner frame + refreshes the
+  -- statusline every 100ms so "thinking" visibly animates.
+  rec.turn_started_at = os.time()
+  rec.turn_phase = "thinking"
+  rec.spinner_idx = 0
+  if rec.turn_timer then
+    pcall(function() rec.turn_timer:stop() end)
+    pcall(function() rec.turn_timer:close() end)
+  end
+  rec.turn_timer = (vim.uv or vim.loop).new_timer()
+  rec.turn_timer:start(100, 100, vim.schedule_wrap(function()
+    if rec.turn_started_at then
+      rec.spinner_idx = (rec.spinner_idx or 0) + 1
+      statusline.redraw()
+    end
+  end))
+  statusline.redraw()
+
   local handlers = {
     init = function(data)
       if not rec.session_id then
@@ -79,6 +97,10 @@ function M.send()
       statusline.redraw()
     end,
     text_delta = function(d)
+      if rec.turn_phase ~= "streaming" then
+        rec.turn_phase = "streaming"
+        statusline.redraw()
+      end
       render.append_assistant_delta(rec.transcript_buf, d.text)
     end,
     tool_call = function(d)
@@ -116,6 +138,15 @@ function M.send()
     exit = function(d)
       render.end_assistant(rec.transcript_buf)
       rec.job = nil
+      -- Tear down the per-turn timer + phase markers.
+      if rec.turn_timer then
+        pcall(function() rec.turn_timer:stop() end)
+        pcall(function() rec.turn_timer:close() end)
+        rec.turn_timer = nil
+      end
+      rec.turn_started_at = nil
+      rec.turn_phase = nil
+      rec.spinner_idx = nil
       if d.code ~= 0 and d.code ~= nil then
         render.append_error(rec.transcript_buf,
           string.format("[claude exited with code %d]", d.code))
@@ -165,6 +196,15 @@ function M.interrupt()
     render.append_error(rec.transcript_buf, "[interrupted]")
     render.end_assistant(rec.transcript_buf)
     rec.job = nil
+    if rec.turn_timer then
+      pcall(function() rec.turn_timer:stop() end)
+      pcall(function() rec.turn_timer:close() end)
+      rec.turn_timer = nil
+    end
+    rec.turn_started_at = nil
+    rec.turn_phase = nil
+    rec.spinner_idx = nil
+    statusline.redraw()
   end
 end
 
