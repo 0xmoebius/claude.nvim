@@ -16,7 +16,6 @@ Exit code is always 0; decisions travel via the JSON on stdout.
 from __future__ import annotations
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -37,6 +36,47 @@ def respond(decision: str, reason: str) -> None:
     sys.exit(0)
 
 
+def run_remote_picker(sock: str, expr: str, timeout_s: int) -> str:
+    """Kick off an async picker in nvim via --remote-expr + tempfile handoff,
+    poll the tempfile for the answer. Returns the answer string, or raises."""
+    fd, answer_path = tempfile.mkstemp(prefix="claude-nvim-ans-", suffix=".txt")
+    os.close(fd)
+    # Sentinel so we don't mistake "created but empty" for "done".
+    with open(answer_path, "w") as f:
+        f.write("<IN-FLIGHT>\n")
+    full_expr = expr.replace("{ANSWER_PATH}", json.dumps(answer_path))
+    try:
+        subprocess.run(
+            ["nvim", "--server", sock, "--remote-expr", full_expr],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as e:
+        try:
+            os.unlink(answer_path)
+        except OSError:
+            pass
+        raise RuntimeError(f"nvim unreachable: {e}")
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with open(answer_path) as f:
+                content = f.read()
+        except OSError:
+            content = ""
+        if content and content != "<IN-FLIGHT>\n":
+            try:
+                os.unlink(answer_path)
+            except OSError:
+                pass
+            return content.rstrip("\n")
+        time.sleep(0.2)
+    try:
+        os.unlink(answer_path)
+    except OSError:
+        pass
+    raise TimeoutError("picker timed out")
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -54,62 +94,27 @@ def main() -> None:
 
     tool_input_lit = json.dumps(json.dumps(tool_input))
 
-    # AskUserQuestion is the CLI's ask-the-user-a-question tool. In -p mode
-    # the CLI short-circuits it with an error; we intercept at PreToolUse,
-    # render a telescope picker in the user's nvim, and surface the answer
-    # back to the model as the tool_result (via deny+reason — the CLI marks
-    # it is_error:true, but the reason text IS the answer).
-    #
-    # The picker CANNOT run inside a --remote-expr evaluation (keyboard
-    # input isn't pumped into telescope during synchronous expr eval), so
-    # we use a tempfile: remote-expr kicks off an async picker chain that
-    # writes the final answer to the file, and this process polls it.
+    # AskUserQuestion: the CLI's ask-the-user-a-question tool. In -p mode
+    # the CLI short-circuits with an error; we intercept here, render a
+    # picker in nvim, and surface the answer as the tool_result via
+    # deny+reason (the CLI flags it is_error:true, but the reason text IS
+    # the answer).
     if tool_name == "AskUserQuestion":
-        fd, answer_path = tempfile.mkstemp(prefix="claude-nvim-ask-", suffix=".txt")
-        os.close(fd)
-        # Sentinel so we don't confuse "file exists but empty" with "done".
-        with open(answer_path, "w") as f:
-            f.write("<IN-FLIGHT>\n")
-        path_lit = json.dumps(answer_path)
         expr = (
-            f'v:lua.require("claude.questions").start('
-            f'{path_lit}, {tool_input_lit})'
+            'v:lua.require("claude.questions").start('
+            f'{{ANSWER_PATH}}, {tool_input_lit})'
         )
         try:
-            subprocess.run(
-                ["nvim", "--server", sock, "--remote-expr", expr],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except subprocess.TimeoutExpired:
-            respond("deny", "claude.nvim: nvim unreachable")
+            answer = run_remote_picker(sock, expr, timeout_s)
+        except (RuntimeError, TimeoutError) as e:
+            respond("deny", f"claude.nvim: {e}")
             return
-        except FileNotFoundError:
-            respond("deny", "claude.nvim: nvim binary not on PATH")
-            return
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            try:
-                with open(answer_path) as f:
-                    content = f.read()
-            except OSError:
-                content = ""
-            if content and content != "<IN-FLIGHT>\n":
-                try:
-                    os.unlink(answer_path)
-                except OSError:
-                    pass
-                respond("deny", content.rstrip("\n") or "(no answer)")
-                return
-            time.sleep(0.2)
-        try:
-            os.unlink(answer_path)
-        except OSError:
-            pass
-        respond("deny", "claude.nvim: picker timed out")
+        respond("deny", answer or "(no answer)")
         return
 
+    # Any other matched tool (only when ask_permissions=true) goes through
+    # the legacy vim.fn.confirm dialog. Synchronous remote-expr is fine
+    # here because vim.fn.confirm pumps its own input loop.
     tool_name_lit = json.dumps(tool_name)
     expr = (
         f'v:lua.require("claude.permissions").prompt('
