@@ -264,6 +264,30 @@ function M.new_here()
   activate({ kind = "new", cwd = vim.fn.getcwd() })
 end
 
+-- Change the current Claude tab's cwd. Updates rec.session_cwd, tcd's the
+-- tab, and refreshes the statusline (so the branch reflects the new cwd).
+function M.cd(path)
+  local rec = state.current()
+  if not rec then
+    vim.notify("claude.nvim: not on a Claude tab", vim.log.levels.WARN)
+    return
+  end
+  if not path or path == "" then
+    print("session cwd: " .. (rec.session_cwd or "<unset>"))
+    print("tab cwd:     " .. vim.fn.getcwd())
+    return
+  end
+  local abs = vim.fn.fnamemodify(vim.fn.expand(path), ":p")
+  if vim.fn.isdirectory(abs) ~= 1 then
+    vim.notify("claude.nvim: not a directory: " .. abs, vim.log.levels.ERROR)
+    return
+  end
+  rec.session_cwd = abs
+  pcall(vim.cmd.tcd, vim.fn.fnameescape(abs))
+  require("claude.statusline").redraw()
+  vim.notify("claude.nvim: session cwd → " .. abs)
+end
+
 function M.close_current()
   local rec = state.current()
   if not rec then
@@ -289,6 +313,7 @@ function M.quit()
     if rec.tab then state.remove(rec.tab) end
   end
   tabline.uninstall()
+  require("claude.statusline").uninstall()
   -- If any other tabs survive, stay in nvim. Otherwise quit.
   if #vim.api.nvim_list_tabpages() == 0 then
     vim.cmd("qa!")

@@ -73,6 +73,11 @@ function M.open(session_cwd)
   vim.wo[rec.prompt_win].linebreak = true
   vim.wo[rec.prompt_win].number = false
   vim.wo[rec.prompt_win].relativenumber = false
+  -- Install statusline: sets laststatus=2, clears winbar, attaches our
+  -- expression to the prompt window only (transcript gets a blank row so
+  -- there's exactly one visible bar, at the very bottom).
+  statusline.install()
+  statusline.attach(rec)
   -- Disable cursorline in the prompt: on some terminals (and with heirline
   -- statusline configs) the cursorline-repaint on each keystroke bleeds
   -- into a statusline redraw, producing visible flicker. We don't need
@@ -82,19 +87,11 @@ function M.open(session_cwd)
   -- Differentiate the prompt pane from the transcript with a slight bg tint.
   vim.wo[rec.prompt_win].winhighlight = "Normal:ClaudePromptBg,EndOfBuffer:ClaudePromptBg"
 
-  -- Kick off the subscription-usage fetch up front so "5h X%" appears as
-  -- soon as the layout is visible (instead of on first tick).
+  -- Kick off subscription-usage fetch up front so "5h X%" appears promptly.
   if require("claude.config").opts.subscription_usage then
     pcall(function() require("claude.usage").get() end)
   end
-  -- Push the winbar content (branch / ctx / usage) into both panes.
   statusline.redraw()
-  -- Re-apply the winbar on window/tab enter events: some plugins
-  -- (heirline, lualine) reset winbar on focus events, which would make
-  -- our bar disappear.
-  vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "TabEnter" }, {
-    callback = function() statusline.redraw() end,
-  })
 
   vim.api.nvim_set_current_win(rec.prompt_win)
   vim.cmd("startinsert")

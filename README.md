@@ -37,8 +37,6 @@ usage and git branch.
   optional 5-hour subscription usage %. No session id noise.
 - **Interactive permission prompts.** Optional: route tool-permission
   decisions into a nvim modal instead of auto-accepting.
-- **Desktop notifications** when a turn finishes — only when your terminal
-  isn't frontmost, so you don't get pinged while reading the reply.
 - **Cross-pane navigation.** `k` at the top of the prompt jumps to the
   transcript; `j` at an empty bottom of the transcript jumps back to the
   prompt. `<leader>ca` / `<leader>ct` also work.
@@ -186,11 +184,6 @@ require("claude").setup({
   tabline = true,
   subscription_usage = true,            -- 5h quota in the winbar
 
-  -- Desktop notifications
-  notifications = true,
-  notification_sound = "Glass",
-  notification_terminal_apps = {},  -- extras, beyond the built-in list
-
   -- Interactive permissions (off by default; when on, supersedes
   -- dangerously_skip_permissions and routes every listed tool through a
   -- nvim confirm)
@@ -305,7 +298,6 @@ claude.nvim/
 │   ├── tabline.lua              per-tab tabline
 │   ├── yank.lua                 clean-copy helpers
 │   ├── permissions.lua          PreToolUse prompt handler
-│   ├── notify.lua               desktop notifications
 │   ├── usage.lua                OAuth /api/oauth/usage client (opt-in)
 │   └── git.lua                  branch lookup w/ TTL cache
 ├── plugin/claude.lua            user commands + hl group defaults
@@ -366,10 +358,3 @@ PRs welcome. A few ground rules:
 ## License
 
 MIT. See [LICENSE](./LICENSE).
-
-## Acknowledgements
-
-- [ccstatusline](https://github.com/sirmalloc/ccstatusline) — reference
-  implementation for the undocumented `/api/oauth/usage` endpoint.
-- The Claude Code team for shipping `--output-format stream-json`, which
-  makes this whole thing possible.

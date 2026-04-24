@@ -72,6 +72,10 @@ vim.api.nvim_create_user_command("ClaudeYankLast",
 vim.api.nvim_create_user_command("ClaudeQuit",
   function() require("claude").quit() end,
   { desc = "claude.nvim: close all Claude tabs and quit nvim" })
+vim.api.nvim_create_user_command("ClaudeCd",
+  function(opts) require("claude").cd(opts.args) end,
+  { nargs = "?", complete = "dir",
+    desc = "claude.nvim: change current session's cwd (branch, git.branch, etc)" })
 vim.api.nvim_create_user_command("ClaudeUsageDebug", function()
   local u = require("claude.usage")
   print(u.debug())

@@ -55,11 +55,6 @@ M.defaults = {
   -- ---- statusline ----------------------------------------------------------
   subscription_usage = true,         -- see :h claude-subscription-usage
 
-  -- ---- desktop notifications ----------------------------------------------
-  notifications = true,
-  notification_sound = "Glass",      -- any macOS system sound; nil = no sound
-  notification_terminal_apps = {},   -- extra terminal apps to treat as "focused"
-
   -- ---- interactive permissions --------------------------------------------
   ask_permissions = false,
   permission_tools = { "Bash", "Write", "Edit" },

@@ -27,7 +27,7 @@ local function empty_record()
     history = {},
     history_idx = 0,
     context_tokens = 0,
-    context_window = 200000,
+    context_window = 1000000, -- opus-1M default; updated from result.modelUsage
     model = nil,
     permission_always = {}, -- session-scoped always-allow list
     turn_seq = 0,           -- incremented per send (for unique buf names, etc.)
