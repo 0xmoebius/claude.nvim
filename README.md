@@ -261,6 +261,43 @@ Mechanics: a PreToolUse hook in a temp `--settings` JSON points at
 
 The "Always X" choice is scoped to the current tab only.
 
+### Interactive questions (AskUserQuestion)
+
+Skills like `/fma` sometimes need you to pick from options mid-turn via
+the `AskUserQuestion` tool. Claude's `-p` mode normally errors out on
+this, so we intercept the tool at PreToolUse and render a custom
+floating picker instead — no config needed, wired unconditionally.
+
+```
+╭──────── Framing ────────╮
+│ Does this scope match   │
+│ what you want FMA'd?    │
+│ ────────────────────    │
+│ ▶ [✓] Looks right       │
+│   [ ] Adjust scope      │
+│   [✓] Add context       │
+│ ────────────────────    │
+│ Full description of the │
+│ focused option here.    │
+│ ────────────────────    │
+│ j/k: nav  <Space>:      │
+│ toggle  <CR>: confirm   │
+│ <Esc>: cancel           │
+╰─────────────────────────╯
+```
+
+Keybindings: `j`/`k` navigate, `<Space>` toggles (multi-select only),
+`<CR>` confirms, `<Esc>` cancels. For single-select questions the
+selected option is returned; for multi-select, all checked options are.
+Cancelling returns "user dismissed; proceed with your best judgement"
+so Claude can carry on.
+
+Mechanics: the hook writes a temp answer-file with an `<IN-FLIGHT>`
+sentinel, tells nvim to run the picker asynchronously, then polls the
+file until it's populated. Running the picker inline inside the
+`--remote-expr` call would freeze the terminal (the main thread can't
+pump keyboard input during synchronous expr eval).
+
 ## How it works
 
 Each turn spawns:
@@ -298,6 +335,7 @@ claude.nvim/
 │   ├── tabline.lua              per-tab tabline
 │   ├── yank.lua                 clean-copy helpers
 │   ├── permissions.lua          PreToolUse prompt handler
+│   ├── questions.lua            AskUserQuestion floating picker
 │   ├── usage.lua                OAuth /api/oauth/usage client (opt-in)
 │   └── git.lua                  branch lookup w/ TTL cache
 ├── plugin/claude.lua            user commands + hl group defaults

@@ -215,6 +215,17 @@ local function format_tool_compact(name, input)
     s = "WebFetch " .. (input.url or "?")
   elseif name == "WebSearch" then
     s = "WebSearch " .. (input.query or "?")
+  elseif name == "AskUserQuestion" then
+    -- Render the first question inline so the transcript shows what was
+    -- asked, not the raw tool name. Multi-question payloads show the count.
+    local qs = input.questions or {}
+    if #qs == 0 then
+      s = "AskUserQuestion"
+    elseif #qs == 1 then
+      s = "Ask: " .. (qs[1].question or "?")
+    else
+      s = string.format("Ask (%d questions): %s", #qs, qs[1].question or "?")
+    end
   else
     s = name
   end
@@ -269,20 +280,45 @@ function M.append_tool_call(buf, call)
 end
 
 -- Tool results are noisy. We skip them entirely unless they're an error,
--- in which case we render the first few lines so debugging is still
--- possible.
+-- in which case we render a compact header + the first few output lines
+-- so debugging is still possible. Header gets the tool-call italic style
+-- (so the visual grammar matches the preceding ↳ call line); body rows
+-- get the error sign in the gutter.
 function M.append_tool_result(buf, result)
   if not result.is_error then return end
-  if not result.text or result.text == "" then return end
-  local lines = vim.split(result.text, "\n", { plain = true })
+  local text = result.text
+  if not text or text == "" then text = "(no output)" end
+  local lines = vim.split(text, "\n", { plain = true })
   lines = truncate_lines(lines, max_output_lines())
+
   buf_ensure_newline(buf)
-  local start_row = vim.api.nvim_buf_line_count(buf) - 1
-  local indented = "  " .. table.concat(lines, "\n  ")
+  local header_row = vim.api.nvim_buf_line_count(buf) - 1
+  buf_append(buf, "  ✗ error")
+  buf_ensure_newline(buf)
+  local body_start = vim.api.nvim_buf_line_count(buf) - 1
+  local indented = "    " .. table.concat(lines, "\n    ")
   buf_append(buf, indented)
-  local end_row = vim.api.nvim_buf_line_count(buf) - 1
+  local body_end = vim.api.nvim_buf_line_count(buf) - 1
   buf_ensure_newline(buf)
-  sign_range(buf, start_row, end_row, "error")
+
+  -- Header: italic muted (matches tool-call line).
+  vim.api.nvim_buf_set_extmark(buf, NS, header_row, 0, {
+    line_hl_group = "ClaudeToolLine",
+    right_gravity = false,
+  })
+  -- Body: red gutter bar + italic muted background line (so multi-line
+  -- error output is visually chunked with the tool call, not mixed with
+  -- assistant prose).
+  for r = body_start, body_end do
+    vim.api.nvim_buf_set_extmark(buf, NS, r, 0, {
+      sign_text = (config.opts.signs and config.opts.signs.char) or "▎",
+      sign_hl_group = "ClaudeErrorSign",
+      line_hl_group = "ClaudeToolLine",
+      right_gravity = false,
+    })
+  end
+  local s = state.find_by_buf(buf)
+  if s then s._last_kind = "tool" end
   autoscroll(buf)
 end
 

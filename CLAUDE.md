@@ -63,8 +63,9 @@ is just the JSONL filename UUID — resume re-attaches by passing `--resume`.
   error gutter signs, fenced-block extmarks).
 - `prompt.lua` — prompt buffer, `:ClaudeSend`, stream-event handlers, queueing
   (sending during an in-flight turn enqueues rather than dropping).
-- `spawn.lua` — `vim.system` wrapper; also builds the PreToolUse hook
-  `--settings` JSON when `ask_permissions = true`.
+- `spawn.lua` — `vim.system` wrapper; always passes a `--settings` JSON
+  with at least an AskUserQuestion PreToolUse matcher, plus the
+  `permission_tools` matchers when `ask_permissions = true`.
 - `stream.lua` — newline-delimited JSON parser.
 - `statusline.lua` / `tabline.lua` — per-tab winbar and tabline.
 - `usage.lua` — opt-in client for the **undocumented** OAuth
@@ -73,6 +74,12 @@ is just the JSONL filename UUID — resume re-attaches by passing `--resume`.
 - `permissions.lua` + `bin/claude-nvim-auth` — PreToolUse hook (Python 3,
   stdlib only) forwards tool details into nvim via `nvim --remote-expr`; the
   user's answer is returned as the hook's `permissionDecision`.
+- `questions.lua` — floating-window picker for `AskUserQuestion`. The hook
+  script dispatches AskUserQuestion here instead of `permissions`. Uses a
+  tempfile handoff (async picker + polling in the hook) because running the
+  picker inside `--remote-expr` freezes the TUI. Wired unconditionally.
+  Answer returns to the model as the tool_result via deny+reason — the
+  CLI flags it `is_error:true`, but the reason text IS the answer.
 
 ### Config & commands
 
