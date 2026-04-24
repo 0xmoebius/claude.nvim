@@ -282,6 +282,16 @@ local function truncate_lines(lines, max)
   return out, true
 end
 
+-- Extract the file path a tool call references, if any. Used by the
+-- transcript peek binding — only tools with a concrete file_path count.
+local function tool_call_path(name, input)
+  input = input or {}
+  if name == "Read" or name == "Write" or name == "Edit" then
+    return input.file_path
+  end
+  return nil
+end
+
 -- Tool calls render as a single flush-left, muted-italic one-liner — no
 -- diff, no output. Full details are still in the session JSONL on disk if
 -- you need them.
@@ -295,10 +305,17 @@ function M.append_tool_call(buf, call)
     line_hl_group = "ClaudeToolLine",
     right_gravity = false,
   })
-  -- Mark current write kind so append_assistant_delta knows whether it's
-  -- resuming from a tool and should insert a separator blank line.
   local s = state.find_by_buf(buf)
-  if s then s._last_kind = "tool" end
+  if s then
+    s._last_kind = "tool"
+    -- Record the file path at this row so <CR> can peek it. Rows are
+    -- stable because the transcript only ever appends.
+    local path = tool_call_path(call.name, call.input)
+    if path then
+      s.tool_call_paths = s.tool_call_paths or {}
+      s.tool_call_paths[row] = path
+    end
+  end
   autoscroll(buf, sticky)
 end
 

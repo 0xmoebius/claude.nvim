@@ -170,6 +170,9 @@ local function activate(entry)
     bind(rec.transcript_buf, km.prev_marker,
       function() M.jump_next_marker(-1) end,
       "Claude: previous message marker")
+    bind(rec.transcript_buf, km.peek_file,
+      function() M.peek_file_at_cursor() end,
+      "Claude: peek file referenced at cursor")
     -- Symmetric to prompt's `k`: pressing `j` while on the last row of the
     -- transcript AND that row is empty jumps focus to the prompt. On any
     -- other row falls through to vim's default `j`.
@@ -192,6 +195,17 @@ local function activate(entry)
            desc = "Claude: down, or escape to prompt at bottom" })
   end
   return rec
+end
+
+-- Peek the file referenced by the tool-call line at the cursor. Silently
+-- no-ops on lines without a recorded file path.
+function M.peek_file_at_cursor()
+  local rec = state.current() or state.find_by_buf(vim.api.nvim_get_current_buf())
+  if not rec or not rec.tool_call_paths then return end
+  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local path = rec.tool_call_paths[row]
+  if not path then return end
+  require("claude.peek").file(path)
 end
 
 -- Jump to the next / prev extmark row in the claude_roles namespace.

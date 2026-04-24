@@ -76,6 +76,7 @@ M.defaults = {
     quit_all        = "<leader>cq",
     next_marker     = "]m",
     prev_marker     = "[m",
+    peek_file       = "<CR>",
     -- Transcript is read-only: these keys redirect to the prompt in insert
     -- mode. Set to {} or nil to disable.
     transcript_to_insert = { "i", "a", "o", "I", "A", "O" },

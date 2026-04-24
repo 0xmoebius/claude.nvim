@@ -16,6 +16,41 @@ local function next_seq()
   return SEQ
 end
 
+-- When something (telescope, neo-tree, :edit, gf, …) tries to display a
+-- file in the transcript or prompt window, divert it into a new tab so
+-- the chat layout stays intact. The protected windows are marked with
+-- `w:claude_expected_buf`; anything else landing there gets kicked out.
+local guard_installed = false
+local function install_window_guard()
+  if guard_installed then return end
+  guard_installed = true
+  local group = vim.api.nvim_create_augroup("ClaudeWindowGuard", { clear = true })
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = group,
+    callback = function(args)
+      local win = vim.api.nvim_get_current_win()
+      local ok, expected = pcall(function() return vim.w[win].claude_expected_buf end)
+      if not ok or not expected or expected == 0 then return end
+      if expected == args.buf then return end
+      if not vim.api.nvim_buf_is_valid(expected) then return end
+      local foreign = args.buf
+      -- Defer the swap: doing it inside BufWinEnter fights nvim's own
+      -- window-switching machinery. By the next tick the event has
+      -- finished and we can cleanly restore + re-home the foreign buf.
+      vim.schedule(function()
+        if vim.api.nvim_win_is_valid(win)
+          and vim.api.nvim_buf_is_valid(expected) then
+          vim.api.nvim_win_set_buf(win, expected)
+        end
+        if vim.api.nvim_buf_is_valid(foreign) then
+          vim.cmd("tabnew")
+          vim.api.nvim_set_current_buf(foreign)
+        end
+      end)
+    end,
+  })
+end
+
 local function make_transcript_buf(seq)
   local buf = vim.api.nvim_create_buf(false, true)
   render.init_buffer(buf, string.format("claude://%d/transcript", seq))
@@ -53,6 +88,7 @@ function M.open(session_cwd)
   rec.transcript_buf = transcript_buf
   rec.transcript_win = vim.api.nvim_get_current_win()
   render.configure_window(rec.transcript_win)
+  vim.w[rec.transcript_win].claude_expected_buf = transcript_buf
 
   -- No file pane; the user's own file explorer (neo-tree, oil, netrw, …)
   -- handles that — just open it when you want it and close when done.
@@ -63,6 +99,8 @@ function M.open(session_cwd)
   rec.prompt_win = vim.api.nvim_get_current_win()
   rec.prompt_buf = make_prompt_buf(seq)
   vim.api.nvim_win_set_buf(rec.prompt_win, rec.prompt_buf)
+  vim.w[rec.prompt_win].claude_expected_buf = rec.prompt_buf
+  install_window_guard()
   local height = vim.api.nvim_win_get_height(rec.transcript_win)
   local prompt_h = math.max(
     layout_cfg.prompt_height_min or 6,

@@ -19,7 +19,8 @@ CONTENTS                                                      *claude-contents*
   9. Subscription usage ..................... |claude-subscription-usage|
  10. Interactive permissions ................ |claude-permissions|
  11. Interactive questions ................... |claude-questions|
- 12. Troubleshooting ........................ |claude-troubleshooting|
+ 12. Peek files from chat .................... |claude-peek|
+ 13. Troubleshooting ........................ |claude-troubleshooting|
 
 
 ==============================================================================
@@ -106,6 +107,9 @@ All keymaps are buffer-local to Claude panes and configurable via
     <leader>ct    focus transcript
     i/a/o/I/A/O   transcript → focus prompt (read-only redirect)
     ]m / [m       transcript → next / prev message marker
+    <CR>          transcript, on a `↳ Read/Write/Edit path` line →
+                    peek the file in a read-only floating window
+                    (dismiss with <Esc> or q). See |claude-peek|.
     <leader>cs    picker (new tab)
     <leader>cn    new session in cwd
     <leader>cc    close this Claude tab
@@ -236,7 +240,35 @@ and forwards the text as the tool_result via deny+reason.
 
 
 ==============================================================================
-12. TROUBLESHOOTING                                   *claude-troubleshooting*
+12. PEEK FILES FROM CHAT                                      *claude-peek*
+
+Each tool call in the transcript renders as a single italic one-liner:
+>
+    ↳ Read /Users/neo/project/src/foo.rs
+    ↳ Edit /Users/neo/project/src/foo.rs
+    ↳ Write /Users/neo/project/src/bar.rs
+<
+Put the cursor on any such line and press <CR>: the referenced file
+opens in a centered read-only floating window with syntax highlighting.
+Press <Esc> or q to dismiss — the chat layout underneath is untouched.
+
+Only Read, Write, and Edit are peekable today (they carry an
+unambiguous file_path). Resumed sessions don't replay tool-call lines,
+so peek only works on tool calls from the current live turn.
+
+Rebind via |claude-config|:
+>
+    keymaps = { peek_file = "<CR>" },  -- or false / "" to disable
+<
+
+Related: the transcript and prompt windows auto-divert any foreign
+buffer loaded into them (telescope picks, :edit, gf, …) into a fresh
+tab so the chat layout is preserved. Jump to the diverted tab with gt
+and back with gT.
+
+
+==============================================================================
+13. TROUBLESHOOTING                                   *claude-troubleshooting*
 
 `:echo v:servername`
                     Should be non-empty. The plugin calls |serverstart()|

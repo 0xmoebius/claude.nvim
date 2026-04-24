@@ -58,7 +58,10 @@ is just the JSONL filename UUID — resume re-attaches by passing `--resume`.
   extract first-prompt titles (skipping boilerplate prefixes like
   `<local-command-…>` / `<system-reminder>`), present via telescope or
   `vim.ui.select`.
-- `layout.lua` — tab/window/buffer creation, focus helpers.
+- `layout.lua` — tab/window/buffer creation, focus helpers. Also owns
+  the "chat-window guard" BufWinEnter autocmd: any non-chat buffer that
+  tries to display in the transcript or prompt window gets diverted to a
+  new tab so the chat layout stays intact.
 - `render.lua` — transcript rendering (user-row bg tint, tool-call one-liners,
   error gutter signs, fenced-block extmarks).
 - `prompt.lua` — prompt buffer, `:ClaudeSend`, stream-event handlers, queueing
@@ -80,6 +83,13 @@ is just the JSONL filename UUID — resume re-attaches by passing `--resume`.
   picker inside `--remote-expr` freezes the TUI. Wired unconditionally.
   Answer returns to the model as the tool_result via deny+reason — the
   CLI flags it `is_error:true`, but the reason text IS the answer.
+- `float_picker.lua` — shared primitive used by `questions.lua`: a
+  centered floating window with options + preview pane, j/k nav, Space
+  toggle (multi), CR confirm, Esc cancel.
+- `peek.lua` — `<CR>` on a transcript `↳ Read/Write/Edit path` line
+  opens a read-only floating preview of the referenced file. Row→path
+  mapping is recorded on the session record by `render.append_tool_call`
+  (stable because the transcript only appends).
 
 ### Config & commands
 

@@ -7,6 +7,14 @@ from any project, and drive it from inside neovim — with real vim motions,
 buffer-level copy/paste, per-session tabs, and a status bar that shows context
 usage and git branch.
 
+**Mental model:** claude.nvim is a TUI replacement, not a code-assist
+sidebar. A Claude session fills its own tabpage (transcript + prompt);
+opening a file from inside that tab pops the file into a new tab so the
+chat layout is never disturbed. If you want "AI in a split alongside my
+code", use [avante.nvim](https://github.com/yetone/avante.nvim) or
+[codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim)
+— they serve a different workflow.
+
 ## Features
 
 - **`cc` launcher** — run it from any shell, anywhere. You get a fuzzy
@@ -135,6 +143,7 @@ From inside nvim:
 | `<leader>ct`                     | Focus the transcript                         |
 | `i`/`a`/`o`/`I`/`A`/`O` (transcript) | Jump to prompt + insert (read-only redirect) |
 | `]m` / `[m` (transcript)         | Jump next / prev message                     |
+| `<CR>` (transcript, on a tool-call line) | Peek the referenced file in a float  |
 | `<leader>cs`                     | Open picker (new tab)                        |
 | `<leader>cn`                     | New session in cwd                           |
 | `<leader>cc`                     | Close this Claude tab                        |
@@ -144,6 +153,23 @@ From inside nvim:
 | `gt` / `gT`                      | Switch between Claude tabs (vim native)      |
 
 All of these are configurable; see below.
+
+### Peeking at files from chat
+
+The transcript renders each tool call as a single `↳ Read/Write/Edit path`
+line. Put the cursor on any such line and press `<CR>`: the referenced
+file opens in a centered read-only floating window with syntax
+highlighting. `<Esc>` or `q` dismisses it. The chat keeps streaming
+underneath. Only `Read`, `Write`, and `Edit` tool calls are peekable
+today — those are the ones with an unambiguous `file_path`.
+
+### Chat-window protection
+
+The transcript and prompt windows refuse to host anything but themselves.
+If a telescope pick, `:edit`, `gf`, or any other flow tries to load a
+non-chat buffer into one of them, the buffer is automatically diverted
+into a new tab so the chat layout stays intact. Switch to it with `gt`
+and back with `gT`.
 
 ## Configuration
 
@@ -205,6 +231,7 @@ require("claude").setup({
     quit_all         = "<leader>cq",
     next_marker      = "]m",
     prev_marker      = "[m",
+    peek_file        = "<CR>",
     transcript_to_insert = { "i", "a", "o", "I", "A", "O" },
   },
 })
@@ -336,6 +363,8 @@ claude.nvim/
 │   ├── yank.lua                 clean-copy helpers
 │   ├── permissions.lua          PreToolUse prompt handler
 │   ├── questions.lua            AskUserQuestion floating picker
+│   ├── float_picker.lua         shared floating-window picker primitive
+│   ├── peek.lua                 <CR>-on-tool-call file preview float
 │   ├── usage.lua                OAuth /api/oauth/usage client (opt-in)
 │   └── git.lua                  branch lookup w/ TTL cache
 ├── plugin/claude.lua            user commands + hl group defaults
