@@ -1,0 +1,97 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A Neovim frontend for the Claude Code CLI. It reads/writes the same
+`~/.claude/projects/*/*.jsonl` session store as the official `claude` CLI, so
+the two are interchangeable. Core must remain dependency-free (no plenary,
+no nui); telescope / oil / neo-tree are optional graceful-degradations.
+
+## Smoke-testing changes
+
+There is no test suite. The contributor ground rule (see README §Contributing)
+is to smoke-test in headless nvim before opening a PR — `require` each changed
+module and exercise its behavior:
+
+```sh
+nvim --headless -c "set rtp+=$(pwd)" -c "runtime! plugin/claude.lua" \
+  -c "lua require('claude').setup({})" -c "lua print('ok')" -c "qa!"
+```
+
+For end-to-end behavior use `./bin/cc` from any directory — it self-bootstraps
+the plugin's rtp so you don't need the in-development copy wired into your
+nvim config.
+
+## Architecture
+
+One Claude tab = one session record. No long-running daemon; each turn spawns
+a fresh `claude -p` subprocess.
+
+### Turn lifecycle
+
+`prompt.send()` → `spawn.send()` builds argv:
+
+```
+claude -p --output-format stream-json --verbose --include-partial-messages \
+       [--resume <sid>] [--dangerously-skip-permissions | --permission-mode X]
+       [--settings <hook-json>] [--model X]
+```
+
+`vim.system` pipes the user message into stdin and streams NDJSON from stdout.
+`stream.lua` parses each line and dispatches via `vim.schedule` to handlers in
+`prompt.lua`, which call `render.lua` to mutate the transcript buffer. When
+the subprocess exits the parser flushes and the turn is done. Session identity
+is just the JSONL filename UUID — resume re-attaches by passing `--resume`.
+
+### Module map (lua/claude/)
+
+- `init.lua` — public API (`setup`, `launch`, `pick`, `new_here`, `quit`,
+  `cd`, `close_current`, `send`, `interrupt`); `activate()` wires keymaps
+  and replays the JSONL on resume.
+- `state.lua` — per-tab records keyed by tab handle. Fields on each record
+  include `session_id`, `session_cwd`, `transcript_buf`/`prompt_buf`, `job`,
+  `context_tokens`/`context_window`, `turn_phase`, `turn_timer`,
+  `permission_always` (tab-scoped allowlist).
+- `session.lua` + `picker.lua` — enumerate `~/.claude/projects/**/*.jsonl`,
+  extract first-prompt titles (skipping boilerplate prefixes like
+  `<local-command-…>` / `<system-reminder>`), present via telescope or
+  `vim.ui.select`.
+- `layout.lua` — tab/window/buffer creation, focus helpers.
+- `render.lua` — transcript rendering (user-row bg tint, tool-call one-liners,
+  error gutter signs, fenced-block extmarks).
+- `prompt.lua` — prompt buffer, `:ClaudeSend`, stream-event handlers, queueing
+  (sending during an in-flight turn enqueues rather than dropping).
+- `spawn.lua` — `vim.system` wrapper; also builds the PreToolUse hook
+  `--settings` JSON when `ask_permissions = true`.
+- `stream.lua` — newline-delimited JSON parser.
+- `statusline.lua` / `tabline.lua` — per-tab winbar and tabline.
+- `usage.lua` — opt-in client for the **undocumented** OAuth
+  `/api/oauth/usage` endpoint (180s disk cache, 30s lock); reads token from
+  macOS keychain then `~/.claude/.credentials.json`. Can break at any time.
+- `permissions.lua` + `bin/claude-nvim-auth` — PreToolUse hook (Python 3,
+  stdlib only) forwards tool details into nvim via `nvim --remote-expr`; the
+  user's answer is returned as the hook's `permissionDecision`.
+
+### Config & commands
+
+`config.lua` holds defaults + user-override merge. User commands and
+highlight-group defaults are declared in `plugin/claude.lua`
+(`Claude`, `ClaudePick`, `ClaudeNew`, `ClaudeSend`, `ClaudeInterrupt`,
+`ClaudeYankBlock`, `ClaudeYankLast`, `ClaudeQuit`, `ClaudeCd`,
+`ClaudeUsageDebug`). Every default keymap is driven by `config.opts.keymaps`
+and buffer-scoped — **do not bind global keymaps**.
+
+## Conventions specific to this repo
+
+- Requires Neovim ≥ 0.10 (`vim.system`, `vim.uv`, modern extmark API). OK to
+  use these freely; don't add 0.9 fallbacks.
+- Prefer pure Lua; shelling out is only acceptable for genuinely shell-shaped
+  tasks (`git`, `osascript`, `curl`).
+- Status info is rendered in the **winbar**, not the statusline — the bottom
+  statusline is untouched on purpose (avoids fighting AstroNvim/heirline).
+- Highlight groups are set with `default = true` so user colorschemes win,
+  and re-applied on `ColorScheme`.
+- The `cc` script deliberately raises `ulimit -n` before exec'ing nvim; don't
+  remove it (AstroNvim + many LSPs exhausts the macOS default of 256).
