@@ -34,17 +34,35 @@ end
 local AUTOSCROLL_THROTTLE_NS = 33 * 1e6
 local autoscroll_last = {}
 
-local function autoscroll(buf)
+-- Sticky-bottom: capture before a mutation which windows are "following" the
+-- stream (cursor on the last line). After the mutation, only those windows
+-- get their cursor pushed to the new EOF — windows where the user has
+-- scrolled up stay put. Call capture_sticky() before any buf_append /
+-- ensure_newline / append_blank_line, then autoscroll(buf, sticky) after.
+local function capture_sticky(buf)
+  local sticky = {}
+  local last = vim.api.nvim_buf_line_count(buf)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    if vim.api.nvim_win_is_valid(win)
+        and vim.api.nvim_win_get_cursor(win)[1] >= last then
+      sticky[#sticky + 1] = win
+    end
+  end
+  return sticky
+end
+
+local function autoscroll(buf, sticky)
+  if not sticky or #sticky == 0 then return end
   local now = (vim.uv or vim.loop).hrtime()
   if (autoscroll_last[buf] or 0) + AUTOSCROLL_THROTTLE_NS > now then return end
   autoscroll_last[buf] = now
-  local s = state.find_by_buf(buf)
-  if not s or not s.transcript_win or not vim.api.nvim_win_is_valid(s.transcript_win) then
-    return
-  end
-  if vim.api.nvim_win_get_buf(s.transcript_win) ~= buf then return end
   local line_count = vim.api.nvim_buf_line_count(buf)
-  vim.api.nvim_win_set_cursor(s.transcript_win, { line_count, 0 })
+  for _, win in ipairs(sticky) do
+    if vim.api.nvim_win_is_valid(win)
+        and vim.api.nvim_win_get_buf(win) == buf then
+      pcall(vim.api.nvim_win_set_cursor, win, { line_count, 0 })
+    end
+  end
 end
 
 -- Each message line gets a coloured bar in the sign column. Different hl per
@@ -103,6 +121,7 @@ function M.configure_window(win)
 end
 
 function M.append_user(buf, text)
+  local sticky = capture_sticky(buf)
   local s = state.find_by_buf(buf)
   if s then s._last_kind = "user" end
   buf_ensure_newline(buf)
@@ -130,10 +149,11 @@ function M.append_user(buf, text)
       right_gravity = false,
     })
   end
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 function M.begin_assistant(buf)
+  local sticky = capture_sticky(buf)
   buf_ensure_newline(buf)
   local start_row = vim.api.nvim_buf_line_count(buf) - 1
   local s = state.find_by_buf(buf)
@@ -142,10 +162,11 @@ function M.begin_assistant(buf)
     s._assistant_tagged_to = start_row - 1
     s._last_kind = nil
   end
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 function M.append_assistant_delta(buf, text)
+  local sticky = capture_sticky(buf)
   local s = state.find_by_buf(buf)
   -- When resuming assistant text after a tool call, insert a blank line
   -- separator so tool blocks visually detach from the surrounding prose.
@@ -165,14 +186,15 @@ function M.append_assistant_delta(buf, text)
     s._assistant_tagged_to = end_row
   end
   if s then s._last_kind = "assistant" end
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 function M.end_assistant(buf)
+  local sticky = capture_sticky(buf)
   buf_ensure_newline(buf)
   -- Force a final scroll to EOF, bypassing the streaming throttle.
   autoscroll_last[buf] = 0
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 local function max_output_lines()
@@ -264,6 +286,7 @@ end
 -- diff, no output. Full details are still in the session JSONL on disk if
 -- you need them.
 function M.append_tool_call(buf, call)
+  local sticky = capture_sticky(buf)
   buf_ensure_newline(buf)
   local row = vim.api.nvim_buf_line_count(buf) - 1
   buf_append(buf, "↳ " .. format_tool_compact(call.name, call.input))
@@ -276,7 +299,7 @@ function M.append_tool_call(buf, call)
   -- resuming from a tool and should insert a separator blank line.
   local s = state.find_by_buf(buf)
   if s then s._last_kind = "tool" end
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 -- Tool results are noisy. We skip them entirely unless they're an error,
@@ -291,6 +314,7 @@ function M.append_tool_result(buf, result)
   local lines = vim.split(text, "\n", { plain = true })
   lines = truncate_lines(lines, max_output_lines())
 
+  local sticky = capture_sticky(buf)
   buf_ensure_newline(buf)
   local header_row = vim.api.nvim_buf_line_count(buf) - 1
   buf_append(buf, "  ✗ error")
@@ -319,27 +343,29 @@ function M.append_tool_result(buf, result)
   end
   local s = state.find_by_buf(buf)
   if s then s._last_kind = "tool" end
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 function M.append_error(buf, text)
+  local sticky = capture_sticky(buf)
   buf_ensure_newline(buf)
   local start_row = vim.api.nvim_buf_line_count(buf) - 1
   buf_append(buf, text)
   local end_row = vim.api.nvim_buf_line_count(buf) - 1
   buf_ensure_newline(buf)
   sign_range(buf, start_row, end_row, "error")
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 -- Back-compat shim (rarely used).
 function M.append_tool(buf, label)
+  local sticky = capture_sticky(buf)
   buf_ensure_newline(buf)
   local start_row = vim.api.nvim_buf_line_count(buf) - 1
   buf_append(buf, label)
   buf_ensure_newline(buf)
   sign_range(buf, start_row, start_row, "tool")
-  autoscroll(buf)
+  autoscroll(buf, sticky)
 end
 
 return M
