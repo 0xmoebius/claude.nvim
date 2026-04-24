@@ -19,8 +19,10 @@ CONTENTS                                                      *claude-contents*
   9. Subscription usage ..................... |claude-subscription-usage|
  10. Interactive permissions ................ |claude-permissions|
  11. Interactive questions ................... |claude-questions|
- 12. Peek files from chat .................... |claude-peek|
- 13. Troubleshooting ........................ |claude-troubleshooting|
+ 12. Slash commands .......................... |claude-slash-commands|
+ 13. @-mentions .............................. |claude-mentions|
+ 14. Peek files from chat .................... |claude-peek|
+ 15. Troubleshooting ........................ |claude-troubleshooting|
 
 
 ==============================================================================
@@ -94,6 +96,14 @@ the transcript and prompt wired up.
 :ClaudeQuit         Close all Claude tabs, wipe buffers, kill in-flight
                     jobs, and quit nvim if no other tabs remain.
 
+                                                                    *:ClaudeCd*
+:ClaudeCd [path]    Change the current Claude tab's session cwd. With
+                    no argument, prints the current session + tab cwds.
+
+                                                            *:ClaudeUsageDebug*
+:ClaudeUsageDebug   Print the subscription-usage fetch state (see
+                    |claude-subscription-usage|).
+
 
 ==============================================================================
 5. KEYMAPS                                                    *claude-keymaps*
@@ -117,6 +127,9 @@ All keymaps are buffer-local to Claude panes and configurable via
     <leader>cy    yank last assistant reply
     gy            transcript → yank fenced code block
     gt / gT       switch between tabs (vim native)
+    K / J         prompt (normal) → older / newer prompt history
+    @             prompt (insert) → trigger @-mention file completion
+    <leader>/     prompt (normal) → slash-command picker
 <
 
 
@@ -240,7 +253,52 @@ and forwards the text as the tool_result via deny+reason.
 
 
 ==============================================================================
-12. PEEK FILES FROM CHAT                                      *claude-peek*
+12. SLASH COMMANDS                                    *claude-slash-commands*
+
+`claude -p` mode doesn't interpret slash commands on stdin — they'd be
+sent to the model as plain text. claude.nvim intercepts a curated set
+BEFORE the subprocess spawns and emulates them locally. Feedback lands
+in the transcript as a `› ` system line.
+
+Supported:
+>
+    /clear                 drop session id + wipe transcript; the next
+                           turn starts a brand new session
+    /model                 print the current per-session model
+    /model <name>          set a per-session model override (e.g.
+                           /model opus, /model sonnet). Next spawn
+                           passes --model <name>.
+    /cost                  show context-window usage (tokens / window,
+                           percentage, current model)
+    /memory                open CLAUDE.md for editing. Prefers the
+                           session cwd; falls back to ~/.claude/.
+<
+`<leader>/` in the prompt buffer (normal mode) opens a filterable
+picker listing exactly the commands above. Type to filter, <CR> to
+insert into the prompt, then <CR> again to send.
+
+Any other slash input (e.g. `/compact`, `/review`) is not intercepted
+and will be sent to the model as plain text. Those commands only work
+in the CLI's interactive TUI, which claude.nvim deliberately replaces.
+
+
+==============================================================================
+13. @-MENTIONS                                              *claude-mentions*
+
+Typing `@` in the prompt buffer opens a native completion popup with
+file paths from the session cwd. Source:
+
+- `git ls-files --cached --others --exclude-standard` when the cwd is
+  a git repo (honours .gitignore).
+- A bounded `vim.fs.dir` walk (depth 4, 2000 entries) otherwise.
+
+Accepting a candidate inserts `@<path>`, which the Claude CLI treats
+as a file reference. Results are cached per-cwd for 5s so the filter
+doesn't reshell on every keystroke.
+
+
+==============================================================================
+14. PEEK FILES FROM CHAT                                      *claude-peek*
 
 Each tool call in the transcript renders as a single italic one-liner:
 >
@@ -268,7 +326,7 @@ and back with gT.
 
 
 ==============================================================================
-13. TROUBLESHOOTING                                   *claude-troubleshooting*
+15. TROUBLESHOOTING                                   *claude-troubleshooting*
 
 `:echo v:servername`
                     Should be non-empty. The plugin calls |serverstart()|

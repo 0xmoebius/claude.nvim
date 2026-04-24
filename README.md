@@ -48,6 +48,18 @@ code", use [avante.nvim](https://github.com/yetone/avante.nvim) or
 - **Cross-pane navigation.** `k` at the top of the prompt jumps to the
   transcript; `j` at an empty bottom of the transcript jumps back to the
   prompt. `<leader>ca` / `<leader>ct` also work.
+- **Prompt history.** `K` / `J` in normal mode cycles through previously
+  sent messages in the prompt buffer (shell-style: up = older,
+  down = newer). Per-tab, last 100 entries.
+- **`@`-mention file completion.** Typing `@` in the prompt pops the
+  native completion menu with file paths from the session cwd
+  (`git ls-files` when available, `vim.fs.dir` fallback). The resulting
+  `@path` is what the Claude CLI reads as a file reference.
+- **Slash-command picker.** `<leader>/` opens a filterable picker over
+  the commands we can actually emulate client-side (`/clear`,
+  `/model`, `/cost`, `/memory`). Type to filter, `<CR>` to insert. The
+  CLI's `-p` mode doesn't interpret slash commands on stdin, so the
+  picker is scoped to things we can run ourselves.
 
 ## Requirements
 
@@ -151,6 +163,9 @@ From inside nvim:
 | `<leader>cy`                     | Yank last assistant reply                    |
 | `gy` (transcript)                | Yank fenced code block under cursor          |
 | `gt` / `gT`                      | Switch between Claude tabs (vim native)      |
+| `K` / `J` (prompt, normal)       | Older / newer prompt history                 |
+| `@` (prompt, insert)             | Trigger `@`-mention file completion          |
+| `<leader>/` (prompt, normal)     | Slash-command picker                         |
 
 All of these are configurable; see below.
 
@@ -232,6 +247,9 @@ require("claude").setup({
     next_marker      = "]m",
     prev_marker      = "[m",
     peek_file        = "<CR>",
+    history_prev     = "K",
+    history_next     = "J",
+    slash_cmd        = "<leader>/",
     transcript_to_insert = { "i", "a", "o", "I", "A", "O" },
   },
 })
@@ -365,6 +383,9 @@ claude.nvim/
 │   ├── questions.lua            AskUserQuestion floating picker
 │   ├── float_picker.lua         shared floating-window picker primitive
 │   ├── peek.lua                 <CR>-on-tool-call file preview float
+│   ├── commands.lua             client-side slash-command dispatcher
+│   ├── slash.lua                slash-command picker
+│   ├── mentions.lua             @-mention file completion source
 │   ├── usage.lua                OAuth /api/oauth/usage client (opt-in)
 │   └── git.lua                  branch lookup w/ TTL cache
 ├── plugin/claude.lua            user commands + hl group defaults

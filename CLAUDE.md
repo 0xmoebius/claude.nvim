@@ -90,6 +90,18 @@ is just the JSONL filename UUID — resume re-attaches by passing `--resume`.
   opens a read-only floating preview of the referenced file. Row→path
   mapping is recorded on the session record by `render.append_tool_call`
   (stable because the transcript only appends).
+- `commands.lua` — client-side slash-command dispatcher. `claude -p`
+  doesn't interpret slash commands on stdin, so we intercept a curated
+  subset (`/clear`, `/model`, `/cost`, `/memory`) in `prompt.send`
+  BEFORE spawning. Handlers mutate `rec` and call
+  `render.append_system` for feedback; the subprocess is never spawned
+  for a handled command. `slash.lua` reads `commands.list()` — the
+  picker only lists what `dispatch()` will actually run.
+- `slash.lua` — `<leader>/` picker over the supported slash commands.
+  Uses `float_picker` with `filterable = true` (type-to-filter).
+- `mentions.lua` — `@`-mention file completion for the prompt buffer.
+  `completefunc` walks `git ls-files` (falls back to `vim.fs.dir`).
+  Triggered by an insert-mode `@` remap; 5s per-cwd cache.
 
 ### Config & commands
 
@@ -112,3 +124,28 @@ and buffer-scoped — **do not bind global keymaps**.
   and re-applied on `ColorScheme`.
 - The `cc` script deliberately raises `ulimit -n` before exec'ing nvim; don't
   remove it (AstroNvim + many LSPs exhausts the macOS default of 256).
+
+## Before staging / committing / pushing
+
+Whenever the user asks to stage, commit, or push, do a sweep *before*
+running `git add`:
+
+1. **Clean up orphans.** Delete files/modules/functions/keymaps/config
+   entries that your changes left unreferenced. This includes scratch
+   files in `/tmp`, commented-out blocks, dead branches in `if` ladders,
+   and imports nothing uses. Grep for references before deleting to be
+   sure nothing else points at them.
+2. **Update docs alongside the code.** If you added/removed a user
+   command, keymap, config key, module, CLI flag, or behavior, the
+   following must stay in sync in the same commit:
+   - `CLAUDE.md` (module map, config & commands, conventions)
+   - `README.md` (Features, Default keymaps table, Configuration block,
+     File layout, Troubleshooting)
+   - `doc/claude.txt` if a new command or keymap would belong there
+   - `TODO.md` — cross off anything the commit actually shipped
+3. **Verify with a smoke test.** Run the headless `require` + exercise
+   check from §Smoke-testing changes for every module you touched.
+   Don't commit red.
+
+Do this without being asked — the user should not have to prompt for
+cleanup or doc updates.

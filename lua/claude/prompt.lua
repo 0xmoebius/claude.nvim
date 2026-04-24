@@ -40,6 +40,33 @@ local function add_history(rec, text)
   rec.history_idx = 0
 end
 
+-- Walk through rec.history and load the selected entry into the prompt.
+-- direction +1 = older (higher index), -1 = newer (lower index); idx 0
+-- means "blank / live edit" so stepping past index 1 in the newer
+-- direction clears the buffer.
+local function step_history(rec, direction)
+  if not rec or not rec.prompt_buf then return end
+  if not vim.api.nvim_buf_is_valid(rec.prompt_buf) then return end
+  rec.history = rec.history or {}
+  if #rec.history == 0 then return end
+  local idx = (rec.history_idx or 0) + direction
+  if idx < 0 then idx = 0 end
+  if idx > #rec.history then idx = #rec.history end
+  rec.history_idx = idx
+  if idx == 0 then
+    clear_prompt(rec)
+  else
+    local lines = vim.split(rec.history[idx], "\n", { plain = true })
+    vim.api.nvim_buf_set_lines(rec.prompt_buf, 0, -1, false, lines)
+  end
+  -- Move cursor to end of buffer so the user can continue typing naturally.
+  local last = vim.api.nvim_buf_line_count(rec.prompt_buf)
+  local line = vim.api.nvim_buf_get_lines(rec.prompt_buf, last - 1, last, false)[1] or ""
+  if rec.prompt_win and vim.api.nvim_win_is_valid(rec.prompt_win) then
+    pcall(vim.api.nvim_win_set_cursor, rec.prompt_win, { last, #line })
+  end
+end
+
 -- Work out which tab this call is operating on. If the user invokes
 -- :ClaudeSend while not on a Claude tab, fall back to finding the session
 -- owning the current buffer (e.g. they're in the prompt buffer via <CR>).
@@ -63,7 +90,29 @@ end
 local function spawn_turn(rec, text)
   render.begin_assistant(rec.transcript_buf)
 
-  local turn = { had_error = false, error_text = nil }
+  local turn = {
+    had_error = false,
+    error_text = nil,
+    got_text = false,     -- at least one text_delta received
+    got_result = false,   -- terminal result event received
+  }
+
+  -- Stderr is often noisy (deprecation notices, debug lines). Match
+  -- known failure signals so we surface quota / auth / network blowups
+  -- instead of letting the turn die silently.
+  local STDERR_ERROR_PATTERNS = {
+    "error", "failed", "fatal",
+    "rate limit", "quota", "exceeded",
+    "unauthor", "forbidden", "429",
+    "credit", "usage", "invalid api",
+  }
+  local function stderr_is_error(text)
+    local lower = text:lower()
+    for _, p in ipairs(STDERR_ERROR_PATTERNS) do
+      if lower:find(p, 1, true) then return true end
+    end
+    return false
+  end
 
   -- Start the turn + animated statusline indicator.
   rec.turn_started_at = os.time()
@@ -100,11 +149,15 @@ local function spawn_turn(rec, text)
       statusline.redraw()
     end,
     text_delta = function(d)
+      turn.got_text = true
       if rec.turn_phase ~= "streaming" then
         rec.turn_phase = "streaming"
         statusline.redraw()
       end
       render.append_assistant_delta(rec.transcript_buf, d.text)
+    end,
+    thinking_delta = function(d)
+      render.append_thinking_delta(rec.transcript_buf, d.text)
     end,
     tool_call = function(d)
       render.append_tool_call(rec.transcript_buf, d)
@@ -113,6 +166,7 @@ local function spawn_turn(rec, text)
       render.append_tool_result(rec.transcript_buf, d)
     end,
     result = function(d)
+      turn.got_result = true
       if d.model_usage then
         for _, u in pairs(d.model_usage) do
           if type(u) == "table" and u.contextWindow then
@@ -127,10 +181,23 @@ local function spawn_turn(rec, text)
       rec.turn_phase = nil
       clear_spinner(rec)
       statusline.redraw()
-      if d.is_error and d.errors and d.errors[1] then
+      -- Surface any error the CLI reported. Previously we needed BOTH
+      -- is_error and a populated errors[] — which meant quota blowups
+      -- (is_error=true, errors=nil/empty) rendered nothing and the turn
+      -- just silently stopped. Always show SOMETHING when is_error is
+      -- set; fall back to stop_reason or a generic label.
+      if d.is_error then
+        local msg
+        if d.errors and #d.errors > 0 then
+          msg = table.concat(d.errors, "\n")
+        elseif d.stop_reason and d.stop_reason ~= "" then
+          msg = "[claude: " .. d.stop_reason .. "]"
+        else
+          msg = "[claude: request failed (likely quota / rate limit / auth)]"
+        end
         turn.had_error = true
-        turn.error_text = table.concat(d.errors, "\n")
-        render.append_error(rec.transcript_buf, turn.error_text)
+        turn.error_text = msg
+        render.append_error(rec.transcript_buf, msg)
       end
     end,
     error = function(d)
@@ -139,7 +206,8 @@ local function spawn_turn(rec, text)
       render.append_error(rec.transcript_buf, turn.error_text)
     end,
     stderr = function(d)
-      if d.text and d.text:lower():match("error") then
+      if d.text and d.text ~= "" and stderr_is_error(d.text) then
+        turn.had_error = true
         render.append_error(rec.transcript_buf, d.text)
       end
     end,
@@ -152,6 +220,15 @@ local function spawn_turn(rec, text)
       if d.code ~= 0 and d.code ~= nil then
         render.append_error(rec.transcript_buf,
           string.format("[claude exited with code %d]", d.code))
+        turn.had_error = true
+      elseif not turn.got_text and not turn.had_error then
+        -- Clean exit but nothing was streamed — the CLI bailed silently.
+        -- Most common cause in practice: the user's 5h quota / credit
+        -- balance is out, or the API key is invalid. Tell them so they
+        -- don't stare at an empty transcript wondering if the process
+        -- is still thinking.
+        render.append_error(rec.transcript_buf,
+          "[no response from claude — check usage, credits, or auth]")
         turn.had_error = true
       end
       statusline.redraw()
@@ -190,6 +267,13 @@ function M.send()
   -- they see their input land in the chat even when it's queued behind an
   -- in-flight turn.
   render_user(rec, text)
+
+  -- Client-side slash commands: intercept BEFORE queue / subprocess.
+  -- These never travel over stdin to `claude -p`; they're emulated
+  -- locally (see lua/claude/commands.lua).
+  if require("claude.commands").dispatch(rec, text) then
+    return
+  end
 
   if rec.job then
     rec.queue = rec.queue or {}
@@ -239,6 +323,34 @@ function M.setup_keymaps(rec)
     return "k"
   end, { buffer = buf, expr = true, silent = true,
          desc = "Claude: up, or escape to transcript at top" })
+
+  -- Prompt history: K = older, J = newer. Intentionally overrides vim's
+  -- default J (join lines) / K (keywordprg) inside the prompt only.
+  if km.history_prev and km.history_prev ~= "" then
+    vim.keymap.set("n", km.history_prev, function() step_history(rec, 1) end,
+      { buffer = buf, desc = "Claude: older prompt history" })
+  end
+  if km.history_next and km.history_next ~= "" then
+    vim.keymap.set("n", km.history_next, function() step_history(rec, -1) end,
+      { buffer = buf, desc = "Claude: newer prompt history" })
+  end
+
+  -- Slash-command picker.
+  if km.slash_cmd and km.slash_cmd ~= "" then
+    vim.keymap.set("n", km.slash_cmd,
+      function() require("claude.slash").pick() end,
+      { buffer = buf, desc = "Claude: slash command picker" })
+  end
+
+  -- @-mention file completion. Wires `completefunc` and remaps `@` in
+  -- insert mode to also trigger the completion popup so candidates
+  -- appear the moment the user types `@`.
+  pcall(function()
+    vim.bo[buf].completefunc = "v:lua.require'claude.mentions'.complete"
+  end)
+  vim.keymap.set("i", "@", "@<C-x><C-u>",
+    { buffer = buf, noremap = true, silent = true,
+      desc = "Claude: @-mention file completion" })
 end
 
 return M

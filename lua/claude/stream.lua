@@ -47,8 +47,10 @@ function M.new(handlers)
           emit("text_delta", { text = d.text or "" })
         elseif b.type == "tool_use" and d.type == "input_json_delta" then
           b.json_str = b.json_str .. (d.partial_json or "")
+        elseif b.type == "thinking" and d.type == "thinking_delta" then
+          emit("thinking_delta", { text = d.thinking or "" })
         end
-        -- thinking blocks: signature_delta / thinking_delta — ignore for now.
+        -- signature_delta on thinking blocks is metadata (opaque); skip.
       elseif ev.type == "content_block_stop" then
         local b = blocks[idx]
         if b and b.type == "tool_use" then

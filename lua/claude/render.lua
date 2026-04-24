@@ -121,7 +121,13 @@ function M.configure_window(win)
 end
 
 function M.append_user(buf, text)
-  local sticky = capture_sticky(buf)
+  -- User pressed send → force-scroll every window showing this transcript
+  -- to the new bottom, regardless of whether they were following the
+  -- stream or scrolled up reading history. Rationale: you want to see
+  -- your own message land, and reset "sticky follow" for the reply. The
+  -- capture_sticky mechanism that governs streaming is bypassed for
+  -- this one mutation only.
+  local force_sticky = vim.fn.win_findbuf(buf)
   local s = state.find_by_buf(buf)
   if s then s._last_kind = "user" end
   buf_ensure_newline(buf)
@@ -149,7 +155,10 @@ function M.append_user(buf, text)
       right_gravity = false,
     })
   end
-  autoscroll(buf, sticky)
+  -- Bypass the streaming throttle so the cursor definitely makes it to
+  -- the bottom, even if we autoscrolled <33ms ago.
+  autoscroll_last[buf] = 0
+  autoscroll(buf, force_sticky)
 end
 
 function M.begin_assistant(buf)
@@ -168,9 +177,10 @@ end
 function M.append_assistant_delta(buf, text)
   local sticky = capture_sticky(buf)
   local s = state.find_by_buf(buf)
-  -- When resuming assistant text after a tool call, insert a blank line
-  -- separator so tool blocks visually detach from the surrounding prose.
-  if s and s._last_kind == "tool" then
+  -- When resuming assistant text after a tool call or thinking block,
+  -- insert a blank line so the preceding section visually detaches from
+  -- the assistant prose that follows.
+  if s and (s._last_kind == "tool" or s._last_kind == "thinking") then
     buf_ensure_newline(buf)
     append_blank_line(buf)
     if s.last_assistant_start then
@@ -186,6 +196,46 @@ function M.append_assistant_delta(buf, text)
     s._assistant_tagged_to = end_row
   end
   if s then s._last_kind = "assistant" end
+  autoscroll(buf, sticky)
+end
+
+-- Thinking blocks (extended-thinking models). Rendered as a muted italic
+-- block headed with `💭 thinking…` so it's visually distinct from both
+-- assistant prose and tool-call lines. Streaming-only: we don't re-render
+-- from the JSONL on resume because persisted assistant text already
+-- includes a summary.
+function M.append_thinking_delta(buf, text)
+  if not text or text == "" then return end
+  local sticky = capture_sticky(buf)
+  local s = state.find_by_buf(buf)
+  -- First thinking delta in this run: drop a header line.
+  if not s or s._last_kind ~= "thinking" then
+    buf_ensure_newline(buf)
+    if s and s._last_kind then append_blank_line(buf) end
+    local header_row = vim.api.nvim_buf_line_count(buf) - 1
+    buf_append(buf, "💭 thinking")
+    buf_ensure_newline(buf)
+    vim.api.nvim_buf_set_extmark(buf, NS, header_row, 0, {
+      line_hl_group = "ClaudeThinkingLine",
+      right_gravity = false,
+    })
+    if s then s._thinking_tagged_to = header_row end
+  end
+  local start_row = vim.api.nvim_buf_line_count(buf) - 1
+  buf_append(buf, text)
+  local end_row = vim.api.nvim_buf_line_count(buf) - 1
+  local from = (s and s._thinking_tagged_to or (start_row - 1)) + 1
+  if from < start_row then from = start_row end
+  for r = from, end_row do
+    vim.api.nvim_buf_set_extmark(buf, NS, r, 0, {
+      line_hl_group = "ClaudeThinkingLine",
+      right_gravity = false,
+    })
+  end
+  if s then
+    s._thinking_tagged_to = end_row
+    s._last_kind = "thinking"
+  end
   autoscroll(buf, sticky)
 end
 
@@ -360,6 +410,40 @@ function M.append_tool_result(buf, result)
   end
   local s = state.find_by_buf(buf)
   if s then s._last_kind = "tool" end
+  autoscroll(buf, sticky)
+end
+
+-- System messages: locally-generated transcript output from the
+-- client-side slash-command layer (e.g. `/clear`, `/model`, `/cost`).
+-- Rendered with its own `› ` prefix + ClaudeSystemLine tint so the user
+-- can tell at a glance that the text came from claude.nvim, not from
+-- the model or from a tool.
+function M.append_system(buf, text)
+  local sticky = capture_sticky(buf)
+  local s = state.find_by_buf(buf)
+  if s then s._last_kind = "system" end
+  buf_ensure_newline(buf)
+  if vim.api.nvim_buf_line_count(buf) > 1 then
+    append_blank_line(buf)
+  end
+  local start_row = vim.api.nvim_buf_line_count(buf) - 1
+  buf_append(buf, text)
+  local end_row = vim.api.nvim_buf_line_count(buf) - 1
+  buf_ensure_newline(buf)
+  append_blank_line(buf)
+  for r = start_row, end_row do
+    vim.api.nvim_buf_set_extmark(buf, NS, r, 0, {
+      line_hl_group = "ClaudeSystemLine",
+      right_gravity = false,
+    })
+  end
+  vim.api.nvim_buf_set_extmark(buf, NS, start_row, 0, {
+    virt_text = { { "› ", "ClaudeSystemPrefix" } },
+    virt_text_pos = "inline",
+    right_gravity = false,
+  })
+  -- Bypass the streaming throttle — system messages are one-shot.
+  autoscroll_last[buf] = 0
   autoscroll(buf, sticky)
 end
 

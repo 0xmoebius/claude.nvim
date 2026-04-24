@@ -77,6 +77,14 @@ M.defaults = {
     next_marker     = "]m",
     prev_marker     = "[m",
     peek_file       = "<CR>",
+    -- Prompt-buffer history (normal mode). K = older, J = newer, matching
+    -- the shell convention (Up = back in time, Down = forward).
+    history_prev    = "K",
+    history_next    = "J",
+    -- Slash-command picker (normal mode in the prompt buffer). Deliberately
+    -- NOT under the `<leader>c` prefix — many configs bind `<leader>c` to
+    -- close-buffer, and sharing the prefix makes that fire laggy.
+    slash_cmd       = "<leader>/",
     -- Transcript is read-only: these keys redirect to the prompt in insert
     -- mode. Set to {} or nil to disable.
     transcript_to_insert = { "i", "a", "o", "I", "A", "O" },

@@ -52,3 +52,43 @@ Open questions for the float-overlay approach:
 ## Done / parking lot for tomorrow
 
 - Remove push/desktop notifications — done (will redo from scratch).
+
+## QOL backlog (2026-04-24 brainstorm)
+
+Ordered roughly by ROI.
+
+### Medium
+
+- **Transcript search + jump** — `/` or telescope over message rows. Long
+  chats are scroll-only today.
+- **Quickfix from tool calls** — `render.append_tool_call` already maps
+  row → path (used by peek). Extend into a `:ClaudeQuickfix` that populates
+  qflist with every Read/Write/Edit for the current turn so `:copen` jumps
+  between referenced files.
+- **Pipe diagnostics / visual selection → prompt** —
+  `:ClaudeSendSelection`, `:ClaudeSendDiagnostics`. Tight LSP glue.
+- **render-markdown.nvim passthrough** — confirm the transcript's `nofile`
+  buftype doesn't block it; document an opt-in config.
+- **Image / file paste into prompt** — paste handler → temp file →
+  `@path` injection. Matches official Code UX.
+- **Retry last turn** — if the subprocess exits non-zero or the stream
+  truncates, one-keystroke re-send from the last user message.
+- **Tool output "expand full"** — today truncates silently at
+  `tool_output_max_lines`. Add an inline `[+N lines]` extmark with `<CR>`
+  to expand into a float.
+- **Model / permission presets** — saved profiles per tab
+  (`prod = opus + manual`, `hack = sonnet + skip`). Config-driven.
+- **Permission-hook failure visibility** — if the socket is stale, today
+  it silently denies. Surface a badge in the winbar.
+
+### Larger
+
+- **Checkpoint / fork session** — copy this JSONL up to line N into a new
+  tab. The JSONL-as-session model makes it mostly a file copy.
+- **Tabline grouping / sorting** — sort by recency, group by project cwd,
+  filter. Useful past ~6 open tabs.
+
+### Polish
+
+- **Peek follows scroll** — the file-preview float is pinned; should close
+  or re-anchor when the source line scrolls off.

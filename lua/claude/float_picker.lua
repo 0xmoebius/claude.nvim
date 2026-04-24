@@ -1,9 +1,10 @@
 -- Shared floating-window picker used by both AskUserQuestion (questions.lua)
--- and sensitive-path approval (permissions.lua).
+-- and the slash-command picker (slash.lua).
 --
 -- Single buffer, rendered as:
 --
 --   Prompt text (wrapped)
+--   [filter: xxx]         (filterable mode only)
 --   ──────────
 --   ▶ [✓] Option A
 --     [ ] Option B
@@ -14,11 +15,18 @@
 --
 -- Calls `cb(picks_array)` exactly once when the user confirms or cancels.
 -- `picks_array` is empty on cancel / dismiss.
+--
+-- `opts.filterable = true` enables a substring filter over option.label +
+-- option.description. Printable chars append to the filter; <BS> pops.
+-- In filterable mode the j/k navigation bindings are dropped (j/k would
+-- otherwise be eaten by the filter) — use arrow keys / <C-n>/<C-p>.
 
 local M = {}
 
-function M.open(header, prompt, options, multi, cb)
+function M.open(header, prompt, options, multi, cb, opts)
+  opts = opts or {}
   if #options == 0 then cb({}); return end
+  local filterable = opts.filterable and true or false
 
   local buf = vim.api.nvim_create_buf(false, true)
   local ui = vim.api.nvim_list_uis()[1] or { width = 80, height = 24 }
@@ -53,6 +61,23 @@ function M.open(header, prompt, options, multi, cb)
 
   local state = { cursor = 1, selected = {} }
   local option_rows = {}
+  local filter = ""
+  local visible = options -- options filtered by current `filter`; defaults to all
+
+  local function apply_filter()
+    if filter == "" then
+      visible = options
+    else
+      visible = {}
+      local needle = filter:lower()
+      for _, o in ipairs(options) do
+        local hay = ((o.label or "") .. " " .. (o.description or "")):lower()
+        if hay:find(needle, 1, true) then visible[#visible + 1] = o end
+      end
+    end
+    if state.cursor > #visible then state.cursor = #visible end
+    if state.cursor < 1 then state.cursor = 1 end
+  end
 
   local function render()
     vim.bo[buf].modifiable = true
@@ -62,19 +87,26 @@ function M.open(header, prompt, options, multi, cb)
     for _, l in ipairs(vim.split(prompt or "?", "\n", { plain = true })) do
       table.insert(lines, l)
     end
+    if filterable then
+      table.insert(lines, "filter: " .. filter)
+    end
     table.insert(lines, sep)
 
-    for i, opt in ipairs(options) do
-      local arrow = (i == state.cursor) and "▶ " or "  "
-      local mark = ""
-      if multi then mark = state.selected[i] and "[✓] " or "[ ] " end
-      option_rows[i] = #lines
-      table.insert(lines, arrow .. mark .. (opt.label or "?"))
+    if #visible == 0 then
+      table.insert(lines, "  (no matches)")
+    else
+      for i, opt in ipairs(visible) do
+        local arrow = (i == state.cursor) and "▶ " or "  "
+        local mark = ""
+        if multi then mark = state.selected[opt] and "[✓] " or "[ ] " end
+        option_rows[i] = #lines
+        table.insert(lines, arrow .. mark .. (opt.label or "?"))
+      end
     end
 
     table.insert(lines, sep)
 
-    local cur = options[state.cursor]
+    local cur = visible[state.cursor]
     if cur then
       if cur.label and cur.label ~= "" then
         table.insert(lines, cur.label)
@@ -88,10 +120,15 @@ function M.open(header, prompt, options, multi, cb)
 
     table.insert(lines, "")
     table.insert(lines, sep)
+    local nav_hint = filterable and "↑/↓: nav" or "j/k: nav"
     if multi then
-      table.insert(lines, "j/k: nav   <Space>: toggle   <CR>: confirm   <Esc>: cancel")
+      table.insert(lines,
+        nav_hint .. "   <Space>: toggle   <CR>: confirm   <Esc>: cancel")
+    elseif filterable then
+      table.insert(lines,
+        nav_hint .. "   type to filter   <BS>: back   <CR>: confirm   <Esc>: cancel")
     else
-      table.insert(lines, "j/k: nav   <CR>: confirm   <Esc>: cancel")
+      table.insert(lines, nav_hint .. "   <CR>: confirm   <Esc>: cancel")
     end
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -123,42 +160,93 @@ function M.open(header, prompt, options, multi, cb)
   end
 
   local function move(delta)
-    local n = #options
+    local n = #visible
     if n == 0 then return end
     state.cursor = ((state.cursor - 1 + delta) % n) + 1
     render()
   end
 
-  bmap("j", function() move(1) end)
+  -- Arrow keys always work. j/k only in non-filterable mode (they'd
+  -- otherwise get swallowed as filter input).
   bmap("<Down>", function() move(1) end)
-  bmap("k", function() move(-1) end)
   bmap("<Up>", function() move(-1) end)
-  bmap("gg", function() state.cursor = 1; render() end)
-  bmap("G", function() state.cursor = #options; render() end)
+  bmap("<C-n>", function() move(1) end)
+  bmap("<C-p>", function() move(-1) end)
+  if not filterable then
+    bmap("j", function() move(1) end)
+    bmap("k", function() move(-1) end)
+    bmap("gg", function() state.cursor = 1; render() end)
+    bmap("G", function() state.cursor = #visible; render() end)
+  end
 
   if multi then
     bmap("<Space>", function()
-      state.selected[state.cursor] = not state.selected[state.cursor]
-      render()
+      local cur = visible[state.cursor]
+      if cur then
+        state.selected[cur] = not state.selected[cur]
+        render()
+      end
     end)
   end
 
   bmap("<CR>", function()
+    if #visible == 0 then return end
     local picks = {}
     if multi then
-      for i = 1, #options do
-        if state.selected[i] then table.insert(picks, options[i]) end
+      -- In filter mode the selection set is keyed by option table so
+      -- toggles survive filter changes.
+      for _, o in ipairs(options) do
+        if state.selected[o] then table.insert(picks, o) end
       end
-      if #picks == 0 then picks = { options[state.cursor] } end
+      if #picks == 0 then picks = { visible[state.cursor] } end
     else
-      local cur = options[state.cursor]
+      local cur = visible[state.cursor]
       if cur then picks = { cur } end
     end
     finish(picks)
   end)
   bmap("<Esc>", function() finish({}) end)
-  bmap("q", function() finish({}) end)
   bmap("<C-c>", function() finish({}) end)
+  if not filterable then
+    -- `q` is a common "close" key but in filter mode it's a valid
+    -- filter character, so only bind it outside filterable mode.
+    bmap("q", function() finish({}) end)
+  end
+  bmap("<BS>", function()
+    if filterable and #filter > 0 then
+      filter = filter:sub(1, -2)
+      apply_filter()
+      render()
+    end
+  end)
+
+  if filterable then
+    -- Printable ASCII range as single-key bindings; typing any of these
+    -- appends to the filter. Excludes whitespace (bound separately) and
+    -- special keys like <CR>, <Esc>.
+    local function bind_char(ch)
+      bmap(ch, function()
+        filter = filter .. ch
+        apply_filter()
+        render()
+      end)
+    end
+    for code = 33, 126 do
+      local ch = string.char(code)
+      -- Skip `<` so `<Esc>`, `<CR>`, `<BS>`, `<C-c>` lhs parsing isn't
+      -- ambiguous; `<` is rarely needed in filters anyway.
+      if ch ~= "<" then bind_char(ch) end
+    end
+    if not multi then
+      -- <Space> doubles as filter input when there's no multi-toggle
+      -- consumer competing for it.
+      bmap("<Space>", function()
+        filter = filter .. " "
+        apply_filter()
+        render()
+      end)
+    end
+  end
 
   -- Safety net: if the float is closed by anything else (user :q's it,
   -- buffer wiped, etc.) resolve as cancelled so tempfile pollers unblock.
